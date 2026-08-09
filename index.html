@@ -104,7 +104,7 @@
   .warn-banner{background:var(--red-bg);color:#8A2E1E;border-radius:10px;padding:.75rem 1rem;font-size:13px;margin-bottom:16px;display:flex;align-items:center;gap:8px;}
   .subnav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
 
-  @media (max-width:480px){ .stat-grid{grid-template-columns:1fr 1fr;} }
+  @media (max-width:480px){ .stat-grid{grid-template-columns:1fr 1fr;} .gestao-grid{grid-template-columns:1fr !important;} }
 </style>
 </head>
 <body>
@@ -198,12 +198,13 @@ const NAV = [
   { key:"despesas", label:"Despesas", icon:"💵" },
   { key:"motoristas", label:"Motoristas", icon:"🧑‍✈️" },
   { key:"gestao", label:"Gestão", icon:"🏦" },
-  { key:"configgestao", label:"Config. Gestão", icon:"⚙️" },
+  { key:"configgestao", label:"Config. Fundos", icon:"🏛️" },
 ];
 
 /* ======================= ESTADO ======================= */
-let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], motoristas:[], contasPagar:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", subTabPagar:"gerais", subTabReceber:"pendentes", loaded:false };
-let unsubFretes=null, unsubDespesas=null, unsubConfig=null, unsubMotoristas=null, unsubContasPagar=null;
+let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], motoristas:[], contasPagar:[], fundos:[], fundoRetiradas:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", subTabPagar:"gerais", subTabReceber:"pendentes", loaded:false };
+let unsubFretes=null, unsubDespesas=null, unsubConfig=null, unsubMotoristas=null, unsubContasPagar=null, unsubFundos=null, unsubFundoRetiradas=null;
+let rendimentosAplicados = false;
 let charts = {};
 
 /* ======================= HELPERS ======================= */
@@ -211,6 +212,9 @@ function toBRL(n){ const v=Number.isFinite(n)?n:0; return v.toLocaleString("pt-B
 function toDateBR(iso){ if(!iso) return "—"; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; }
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function esc(s){ return (s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function getFundo(key){ return state.fundos.find(f=>f.id===key) || {}; }
+function getFundoSaldo(key){ return Number(getFundo(key).saldo||0); }
+function mesAtualStr(){ return todayISO().slice(0,7); }
 
 function fretesCalc(){
   return state.fretes.map(f=>{
@@ -302,7 +306,7 @@ auth.onAuthStateChanged(user=>{
     subscribeData(user.uid);
   } else {
     state.uid=null; state.loaded=false;
-    if(unsubFretes) unsubFretes(); if(unsubDespesas) unsubDespesas(); if(unsubConfig) unsubConfig(); if(unsubMotoristas) unsubMotoristas(); if(unsubContasPagar) unsubContasPagar();
+    if(unsubFretes) unsubFretes(); if(unsubDespesas) unsubDespesas(); if(unsubConfig) unsubConfig(); if(unsubMotoristas) unsubMotoristas(); if(unsubContasPagar) unsubContasPagar(); if(unsubFundos) unsubFundos(); if(unsubFundoRetiradas) unsubFundoRetiradas();
     document.getElementById("app-shell").classList.add("hidden");
     document.getElementById("auth-screen").classList.remove("hidden");
   }
@@ -333,11 +337,42 @@ function subscribeData(uid){
     state.contasPagar = snap.docs.map(d=>({id:d.id, ...d.data()}));
     render();
   });
+  unsubFundos = base.collection("fundos").onSnapshot(snap=>{
+    state.fundos = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(!rendimentosAplicados){ rendimentosAplicados=true; aplicarRendimentosMensais(); }
+    render();
+  });
+  unsubFundoRetiradas = base.collection("fundoRetiradas").onSnapshot(snap=>{
+    state.fundoRetiradas = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    render();
+  });
+}
+function aplicarRendimentosMensais(){
+  const mesAtual = mesAtualStr();
+  FUNDOS_DEF.forEach(fd=>{
+    const f = getFundo(fd.key);
+    const saldo = Number(f.saldo||0);
+    const rendimento = Number(f.rendimentoMensal||0);
+    const ultimo = f.ultimoRendimentoAplicado;
+    if(!ultimo){
+      colFundos().doc(fd.key).set({ ultimoRendimentoAplicado: mesAtual },{merge:true});
+      return;
+    }
+    if(ultimo>=mesAtual || saldo<=0 || rendimento<=0) return;
+    const [uy,um] = ultimo.split("-").map(Number);
+    const [ay,am] = mesAtual.split("-").map(Number);
+    const mesesPassados = (ay-uy)*12 + (am-um);
+    if(mesesPassados<=0) return;
+    const novoSaldo = saldo * Math.pow(1+rendimento/100, mesesPassados);
+    colFundos().doc(fd.key).set({ saldo:novoSaldo, ultimoRendimentoAplicado:mesAtual },{merge:true});
+  });
 }
 function colFretes(){ return db.collection("users").doc(state.uid).collection("fretes"); }
 function colDespesas(){ return db.collection("users").doc(state.uid).collection("despesas"); }
 function colMotoristas(){ return db.collection("users").doc(state.uid).collection("motoristas"); }
 function colContasPagar(){ return db.collection("users").doc(state.uid).collection("contasPagar"); }
+function colFundos(){ return db.collection("users").doc(state.uid).collection("fundos"); }
+function colFundoRetiradas(){ return db.collection("users").doc(state.uid).collection("fundoRetiradas"); }
 function docConfig(){ return db.collection("users").doc(state.uid).collection("meta").doc("config"); }
 
 function salvarFrete(data){
@@ -368,8 +403,48 @@ function salvarDespesa(data){
   fecharModal();
 }
 function excluirDespesa(id){ colDespesas().doc(id).delete(); }
-function marcarComoPago(id){ colFretes().doc(id).set({ statusPagamento:"pago", dataPagamento:todayISO() },{merge:true}); }
-function marcarComoAReceber(id){ colFretes().doc(id).set({ statusPagamento:"a_receber", dataPagamento:null },{merge:true}); }
+function marcarComoPago(id){
+  colFretes().doc(id).set({ statusPagamento:"pago", dataPagamento:todayISO() },{merge:true});
+  const frete = state.fretes.find(f=>f.id===id);
+  if(frete){
+    const desp = state.despesas.filter(d=>d.freteId===id).reduce((s,d)=>s+Number(d.valor||0),0);
+    const lucro = Number(frete.faturamento||0) - desp - Number(frete.valorMotorista||0);
+    if(lucro>0) distribuirLucroParaFundos(lucro);
+  }
+}
+function marcarComoAReceber(id){
+  colFretes().doc(id).set({ statusPagamento:"a_receber", dataPagamento:null },{merge:true});
+  const frete = state.fretes.find(f=>f.id===id);
+  if(frete && frete.statusPagamento==="pago"){
+    const desp = state.despesas.filter(d=>d.freteId===id).reduce((s,d)=>s+Number(d.valor||0),0);
+    const lucro = Number(frete.faturamento||0) - desp - Number(frete.valorMotorista||0);
+    if(lucro>0) distribuirLucroParaFundos(-lucro);
+  }
+}
+function distribuirLucroParaFundos(lucro){
+  FUNDOS_DEF.forEach(fd=>{
+    const percent = Number(state.config[fd.key]||0);
+    if(percent===0) return;
+    const delta = lucro*percent/100;
+    colFundos().doc(fd.key).set({ saldo: getFundoSaldo(fd.key)+delta },{merge:true});
+  });
+}
+function salvarFundoConfig(key,dados){ colFundos().doc(key).set(dados,{merge:true}); }
+function inicializarSaldoFundo(key,valor){ colFundos().doc(key).set({ saldo:valor },{merge:true}); }
+function salvarRetirada(data){
+  const payload = {...data};
+  payload.valor = Number(payload.valor||0);
+  colFundos().doc(payload.fundoKey).set({ saldo: getFundoSaldo(payload.fundoKey)-payload.valor },{merge:true});
+  const fd = FUNDOS_DEF.find(x=>x.key===payload.fundoKey);
+  colDespesas().add({ categoria:"outros", valor:payload.valor, data:payload.data||todayISO(), freteId:null, descricao:`Retirada do fundo ${fd?fd.label:payload.fundoKey}${payload.motivo?": "+payload.motivo:""}` })
+    .then(despRef=>{ colFundoRetiradas().add({...payload, despesaId:despRef.id}); });
+  fecharModal();
+}
+function excluirRetirada(retirada){
+  colFundos().doc(retirada.fundoKey).set({ saldo: getFundoSaldo(retirada.fundoKey)+Number(retirada.valor||0) },{merge:true});
+  if(retirada.despesaId) colDespesas().doc(retirada.despesaId).delete();
+  colFundoRetiradas().doc(retirada.id).delete();
+}
 function salvarMotorista(data){
   const payload = {...data}; delete payload.id;
   if(data.id){ colMotoristas().doc(data.id).set(payload,{merge:true}); }
@@ -839,24 +914,38 @@ function viewMotoristas(fc){
 
 /* ======================= GESTÃO (RESUMO) ======================= */
 function viewGestao(totais){
-  const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
-  const sobraLivre = totais.lucroRecebido>0 ? totais.lucroRecebido*(1-percentTotal/100) : 0;
   let html = `<div class="lane"></div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-    <div class="section-title" style="margin:0;">Distribuição do lucro recebido</div>
-    <button class="chip" data-ir="configgestao">⚙️ Configurar percentuais</button>
+    <div class="section-title" style="margin:0;">Saldo dos fundos</div>
+    <button class="chip" data-ir="configgestao">🏛️ Configurar fundos</button>
   </div>
   <div style="background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:1rem 1.1rem;margin-bottom:20px;font-size:13.5px;color:#4A4E54;">
-    Base de cálculo: lucro dos fretes já <strong>pagos</strong> — <span class="mono" style="font-weight:600;">${toBRL(totais.lucroRecebido)}</span>.
+    Cada fundo cresce automaticamente quando um frete é pago (conforme o percentual configurado) e rende sozinho todo mês, se não for usado. Retiradas entram no relatório de despesas.
   </div>
-  <div class="chart-box" style="height:280px;margin-bottom:20px;"><canvas id="chart-gestao"></canvas></div>
-  <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">`;
+  <div class="gestao-grid" style="display:grid;grid-template-columns:minmax(200px,340px) 1fr;gap:20px;align-items:start;">
+    <div class="chart-box" style="height:260px;"><canvas id="chart-gestao"></canvas></div>
+    <div>`;
   FUNDOS_DEF.forEach(fd=>{
-    const percent = Number(state.config[fd.key]||0);
-    const valor = totais.lucroRecebido>0 ? (totais.lucroRecebido*percent)/100 : 0;
-    html += `<div class="stat-card"><div class="stat-label">${fd.icon} ${fd.label}</div><div class="stat-value" style="font-size:17px;">${toBRL(valor)}</div><div class="stat-sub">${percent}%</div></div>`;
+    const f = getFundo(fd.key);
+    const saldo = Number(f.saldo||0);
+    html += `<div style="display:flex;align-items:flex-start;gap:10px;padding:.6rem 0;border-bottom:1px solid #F0EEE6;">
+      <span style="width:12px;height:12px;border-radius:3px;background:${fd.color};flex-shrink:0;margin-top:4px;"></span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:13.5px;">${fd.label}</div>
+        <div style="font-size:12px;color:#8A8D93;">${f.banco?`🏦 ${esc(f.banco)}`:"Banco/aplicação não definido"}${f.rendimentoMensal?` · ${Number(f.rendimentoMensal)}%/mês`:""}</div>
+      </div>
+      <div class="mono" style="font-weight:600;font-size:14.5px;white-space:nowrap;">${toBRL(saldo)}</div>
+    </div>`;
   });
-  html += `<div class="stat-card good"><div class="stat-label">Lucro livre</div><div class="stat-value" style="font-size:17px;">${toBRL(sobraLivre)}</div><div class="stat-sub">${(100-percentTotal).toFixed(0)}%</div></div>
+  html += `<div style="display:flex;align-items:flex-start;gap:10px;padding:.6rem 0;">
+      <span style="width:12px;height:12px;border-radius:3px;background:#1E5A40;flex-shrink:0;margin-top:4px;"></span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:13.5px;">Lucro livre</div>
+        <div style="font-size:12px;color:#8A8D93;">Parte do lucro recebido não alocada a nenhum fundo</div>
+      </div>
+      <div class="mono" style="font-weight:600;font-size:14.5px;white-space:nowrap;">${toBRL(Math.max(0,(()=>{ const pt=FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0); return totais.lucroRecebido>0?totais.lucroRecebido*(1-pt/100):0; })()))}</div>
+    </div>
+    </div>
   </div>`;
   return html;
 }
@@ -868,9 +957,9 @@ function renderChartGestao(totais){
   const sobraLivre = totais.lucroRecebido>0 ? totais.lucroRecebido*(1-percentTotal/100) : 0;
   if(charts.gestao) charts.gestao.destroy();
   const labels = [...FUNDOS_DEF.map(fd=>fd.label), "Lucro livre"];
-  const valores = [...FUNDOS_DEF.map(fd=> totais.lucroRecebido>0 ? (totais.lucroRecebido*Number(state.config[fd.key]||0))/100 : 0), Math.max(0,sobraLivre)];
+  const valores = [...FUNDOS_DEF.map(fd=>getFundoSaldo(fd.key)), Math.max(0,sobraLivre)];
   const cores = [...FUNDOS_DEF.map(fd=>fd.color), "#1E5A40"];
-  charts.gestao = new Chart(ctx,{ type:"pie", data:{ labels, datasets:[{ data:valores.map(v=>Math.round(v)), backgroundColor:cores }] }, options:{ plugins:{ legend:{ position:"bottom", labels:{ boxWidth:10, font:{size:11} } } } } });
+  charts.gestao = new Chart(ctx,{ type:"pie", data:{ labels, datasets:[{ data:valores.map(v=>Math.round(v)), backgroundColor:cores }] }, options:{ plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label:(c)=> c.label+": "+toBRL(c.raw) } } } } });
 }
 
 /* ======================= CONFIGURAÇÕES DE GESTÃO ======================= */
@@ -880,12 +969,13 @@ function viewConfigGestao(totais){
   let html = `<div class="lane"></div>
   <div class="section-title">Base de cálculo</div>
   <div style="background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:1rem 1.1rem;margin-bottom:20px;font-size:13.5px;color:#4A4E54;">
-    Os percentuais abaixo são aplicados automaticamente sobre o <strong>lucro dos fretes já pagos</strong> (<span id="lucro-base">${toBRL(totais.lucroRecebido)}</span>) — ou seja, dinheiro que já está em caixa. Fretes finalizados mas ainda "a receber" entram aqui assim que forem marcados como pagos, na aba A Receber. Ajuste os percentuais como preferir.
+    Os percentuais abaixo são aplicados automaticamente sobre o <strong>lucro dos fretes já pagos</strong> (<span id="lucro-base">${toBRL(totais.lucroRecebido)}</span>). Assim que você marca um frete como pago, cada fundo recebe sua fatia na hora, e o saldo de cada fundo continua rendendo sozinho todo mês.
   </div>
-  <div class="section-title">Percentuais de cada fundo</div>`;
+  <div class="section-title">Fundos: percentual, saldo, banco e rendimento</div>`;
   FUNDOS_DEF.forEach(fd=>{
     const percent = Number(state.config[fd.key]||0);
-    const valor = totais.lucroRecebido>0 ? (totais.lucroRecebido*percent)/100 : 0;
+    const f = getFundo(fd.key);
+    const saldo = Number(f.saldo||0);
     html += `<div class="fund-card" data-fundo="${fd.key}">
       <div class="fund-head">
         <div class="fund-icon" style="background:${fd.color}22;">${fd.icon}</div>
@@ -895,13 +985,24 @@ function viewConfigGestao(totais){
           <span style="font-size:13px;color:var(--muted);">%</span>
         </div>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
         <div class="fund-bar-bg"><div class="fund-bar-fill" data-bar="${fd.key}" style="width:${Math.min(100,percent)}%;background:${fd.color};"></div></div>
-        <div class="mono" data-valor="${fd.key}" style="font-weight:600;font-size:15px;color:${fd.color};white-space:nowrap;">${toBRL(valor)}</div>
+        <div style="text-align:right;white-space:nowrap;">
+          <div class="mono" style="font-weight:600;font-size:15px;color:${fd.color};">${toBRL(saldo)}</div>
+          <div style="font-size:11px;color:#8A8D93;">saldo atual</div>
+        </div>
+      </div>
+      <div class="grid-2" style="margin-bottom:8px;">
+        <div class="field" style="margin-bottom:0;"><label>Banco / aplicação</label><input type="text" class="fundo-banco-input" data-fundo-banco="${fd.key}" value="${esc(f.banco)}" placeholder="Ex: Nubank - Caixinha" /></div>
+        <div class="field" style="margin-bottom:0;"><label>Rendimento (% ao mês)</label><input type="number" step="0.01" class="fundo-rend-input" data-fundo-rend="${fd.key}" value="${f.rendimentoMensal||""}" placeholder="Ex: 0,9" /></div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button style="flex:1;background:transparent;border:1px solid var(--line);border-radius:8px;padding:.5rem;font-size:12.5px;font-weight:600;" data-salvar-fundo-info="${fd.key}">Salvar banco/rendimento</button>
+        <button style="flex:1;background:transparent;border:1px solid #E5B8AE;color:var(--red);border-radius:8px;padding:.5rem;font-size:12.5px;font-weight:600;" data-retirar-fundo="${fd.key}">Registrar retirada</button>
       </div>
     </div>`;
   });
-  html += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">
+  html += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;margin-bottom:28px;">
     <div id="total-alocado-box" style="flex:1;min-width:200px;background:${percentTotal>100?'var(--red-bg)':'#F0EEE6'};border-radius:12px;padding:.9rem 1.1rem;">
       <div id="total-alocado-label" style="font-size:12.5px;color:${percentTotal>100?'#8A2E1E':'var(--muted)'};font-weight:600;">${percentTotal>100?'⚠️ ':''}Total alocado</div>
       <div id="total-alocado-valor" class="mono" style="font-size:20px;font-weight:600;">${percentTotal}%</div>
@@ -912,7 +1013,26 @@ function viewConfigGestao(totais){
       <div id="sobra-livre" class="mono" style="font-size:20px;font-weight:600;color:var(--green);">${toBRL(sobraLivre)}</div>
     </div>
   </div>
-  <div class="section-title" style="margin-top:28px;">Teto de gastos mensais com o caminhão</div>
+
+  <div class="section-title">Histórico de retiradas</div>`;
+  const retiradas = [...state.fundoRetiradas].sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  if(retiradas.length===0){
+    html += `<div class="empty" style="margin-bottom:28px;"><div style="font-size:30px;">💸</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nenhuma retirada registrada</div><div style="font-size:13.5px;color:#8A8D93;">Use "Registrar retirada" em cada fundo quando usar esse dinheiro.</div></div>`;
+  } else {
+    html += `<div style="margin-bottom:28px;">`;
+    retiradas.forEach(r=>{
+      const fd = FUNDOS_DEF.find(x=>x.key===r.fundoKey);
+      html += `<div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.7rem 1rem;margin-bottom:6px;">
+        <div style="width:10px;height:10px;border-radius:3px;background:${fd?fd.color:'#8A8D93'};flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;"><div style="font-weight:600;font-size:14px;">${fd?fd.label:r.fundoKey}${r.motivo?` · ${esc(r.motivo)}`:""}</div><div style="font-size:12px;color:#8A8D93;">${toDateBR(r.data)}</div></div>
+        <div class="mono" style="font-weight:600;font-size:14px;color:var(--red);">${toBRL(r.valor)}</div>
+        <button style="background:transparent;border:none;padding:3px;" data-excluir-retirada="${r.id}">🗑️</button>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<div class="section-title">Teto de gastos mensais com o caminhão</div>
   <div style="background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:1rem 1.1rem;">
     <div style="font-size:13px;color:#4A4E54;margin-bottom:12px;">Defina um teto mensal de despesas (combustível, pneu, mecânica, etc.). Quando o gasto do mês chegar perto do limite, o app avisa no Painel.</div>
     <div class="grid-2" style="margin-bottom:0;">
@@ -981,6 +1101,17 @@ function bindViewEvents(fc,totais){
     state.config.tetoGastoMensal = Number(document.getElementById("cfg-teto").value)||0;
     salvarConfig(state.config);
   });
+  document.querySelectorAll("[data-salvar-fundo-info]").forEach(el=>el.addEventListener("click",()=>{
+    const key = el.dataset.salvarFundoInfo;
+    const banco = document.querySelector(`[data-fundo-banco="${key}"]`).value.trim();
+    const rendimentoMensal = Number(document.querySelector(`[data-fundo-rend="${key}"]`).value)||0;
+    salvarFundoConfig(key,{ banco, rendimentoMensal });
+  }));
+  document.querySelectorAll("[data-retirar-fundo]").forEach(el=>el.addEventListener("click",()=>abrirModalRetirada(el.dataset.retirarFundo)));
+  document.querySelectorAll("[data-excluir-retirada]").forEach(el=>el.addEventListener("click",()=>{
+    const r = state.fundoRetiradas.find(x=>x.id===el.dataset.excluirRetirada);
+    if(r && confirm("Excluir esta retirada? O valor volta para o saldo do fundo e a despesa vinculada é removida.")) excluirRetirada(r);
+  }));
 
   document.querySelectorAll(".percent-input").forEach(inp=>{
     inp.addEventListener("input",()=>{
@@ -988,9 +1119,7 @@ function bindViewEvents(fc,totais){
       let val = Math.max(0, Math.min(100, Number(inp.value)||0));
       state.config[key] = val;
       const lucroBase = totais.lucroRecebido;
-      const valor = lucroBase>0 ? (lucroBase*val)/100 : 0;
       document.querySelector(`[data-bar="${key}"]`).style.width = Math.min(100,val)+"%";
-      document.querySelector(`[data-valor="${key}"]`).textContent = toBRL(valor);
       const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
       document.getElementById("total-alocado-valor").textContent = percentTotal+"%";
       const over = percentTotal>100;
@@ -1178,6 +1307,33 @@ function abrirModalMotorista(motorista){
     salvarMotorista({ id:m.id, nome, telefone:document.getElementById("mo-tel").value.trim(), chavePix:document.getElementById("mo-pix").value.trim(), observacoes:document.getElementById("mo-obs").value.trim() });
   });
   if(m.id) document.getElementById("excluir-motorista-modal").addEventListener("click",()=>{ if(confirm("Excluir este motorista?")){ excluirMotorista(m.id); fecharModal(); } });
+}
+
+function abrirModalRetirada(fundoKey){
+  const fd = FUNDOS_DEF.find(x=>x.key===fundoKey);
+  const saldo = getFundoSaldo(fundoKey);
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+  <div class="modal-overlay" id="ov-retirada">
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-head"><div class="modal-title">Retirada — ${fd?fd.label:""}</div><button class="x-btn" id="fechar-retirada">✕</button></div>
+      <div style="font-size:12.5px;color:#8A8D93;margin-bottom:12px;">Saldo atual: <strong class="mono">${toBRL(saldo)}</strong></div>
+      <div class="grid-2">
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="rt-valor" placeholder="0,00" /></div>
+        <div class="field"><label>Data</label><input type="date" id="rt-data" value="${todayISO()}" /></div>
+      </div>
+      <div class="field"><label>Para que foi usado</label><input id="rt-motivo" placeholder="Ex: troca de pneu, revisão do motor..." /></div>
+      <div style="font-size:12px;color:#8A8D93;margin-bottom:12px;">Isso lança automaticamente como despesa no relatório.</div>
+      <button class="btn-primary" id="salvar-retirada">Confirmar retirada</button>
+    </div>
+  </div>`;
+  document.getElementById("ov-retirada").addEventListener("click",fecharModal);
+  document.getElementById("fechar-retirada").addEventListener("click",fecharModal);
+  document.getElementById("salvar-retirada").addEventListener("click",()=>{
+    const valor = Number(document.getElementById("rt-valor").value)||0;
+    if(valor<=0) return;
+    salvarRetirada({ fundoKey, valor, data:document.getElementById("rt-data").value||todayISO(), motivo:document.getElementById("rt-motivo").value.trim() });
+  });
 }
 
 function abrirModalConta(conta){
