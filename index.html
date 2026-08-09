@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Controle de Fretes</title>
+<meta name="description" content="Gestão financeira do frete: faturamento, despesas, lucratividade e fundos." />
+<meta name="theme-color" content="#24272B" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --bg:#F5F3EE; --ink:#24272B; --muted:#6B6F76; --line:#E3E0D6; --card:#FFFFFF;
+    --amber:#D98E2B; --amber-bg:#FAEEDA; --amber-ink:#8A5A0C;
+    --green:#1E5A40; --green-bg:#E1F0E7;
+    --red:#B84C3D; --red-bg:#F9E3DF;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
+  .display{font-family:'Oswald',sans-serif;font-weight:600;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  input,select,textarea,button{font-family:inherit;}
+  input,select,textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px;background:#fff;color:var(--ink);}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--amber);outline-offset:0;}
+  button{cursor:pointer;}
+  #wrap{max-width:1080px;margin:0 auto;padding-bottom:3rem;}
+  .hidden{display:none !important;}
+
+  /* auth */
+  #auth-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem;}
+  .auth-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:2rem 1.75rem;width:100%;max-width:380px;}
+  .auth-logo{width:46px;height:46px;border-radius:10px;background:var(--ink);display:flex;align-items:center;justify-content:center;margin:0 auto 1rem;}
+  .field{margin-bottom:12px;}
+  .field label{font-size:12.5px;font-weight:600;color:#4A4E54;display:block;margin-bottom:4px;}
+  .btn-primary{width:100%;background:var(--ink);color:#fff;border:none;border-radius:8px;padding:0.75rem;font-weight:600;font-size:14px;}
+  .btn-amber{display:flex;align-items:center;gap:6px;background:var(--amber);color:#3B2405;border:none;border-radius:8px;padding:0.55rem 1rem;font-weight:600;font-size:13.5px;}
+  .link-btn{background:none;border:none;color:var(--muted);font-size:13px;text-decoration:underline;cursor:pointer;padding:0;}
+  .auth-error{background:var(--red-bg);color:#8A2E1E;font-size:13px;border-radius:8px;padding:8px 10px;margin-bottom:10px;}
+
+  /* header/nav */
+  header{padding:1.75rem 1.25rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand-icon{width:42px;height:42px;border-radius:10px;background:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .brand-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:22px;letter-spacing:.3px;line-height:1.1;}
+  .brand-sub{font-size:13px;color:var(--muted);}
+  .lane{height:3px;margin:.75rem 1.25rem 1.25rem;background-image:repeating-linear-gradient(90deg,var(--amber) 0 18px,transparent 18px 30px);border-radius:2px;}
+  nav{padding:0 1.25rem;display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);}
+  nav button{display:flex;align-items:center;gap:6px;padding:.65rem .9rem;background:transparent;border:none;font-size:14px;font-weight:500;color:#8A8D93;border-bottom:3px solid transparent;margin-bottom:-1px;white-space:nowrap;}
+  nav button.active{font-weight:600;color:var(--ink);border-bottom:3px solid var(--amber);}
+  .nav-badge{background:var(--amber-bg);color:var(--amber-ink);font-size:11px;font-weight:600;padding:1px 6px;border-radius:20px;}
+  main{padding:0 1.25rem;}
+
+  .section-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:14px;letter-spacing:.4px;text-transform:uppercase;color:#4A4E54;margin-bottom:10px;}
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:24px;}
+  .stat-card{border-radius:12px;padding:1rem 1.1rem;border:1px solid #E9E6DC;background:var(--card);}
+  .stat-card.good{background:var(--green-bg);}
+  .stat-card.bad{background:var(--red-bg);}
+  .stat-card.amber{background:var(--amber-bg);}
+  .stat-label{font-size:12.5px;color:var(--muted);font-weight:500;margin-bottom:4px;}
+  .stat-card.good .stat-label{color:var(--green);}
+  .stat-card.bad .stat-label{color:#8A2E1E;}
+  .stat-card.amber .stat-label{color:var(--amber-ink);}
+  .stat-value{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;}
+  .stat-card.good .stat-value{color:var(--green);}
+  .stat-card.bad .stat-value{color:#8A2E1E;}
+  .stat-card.amber .stat-value{color:var(--amber-ink);}
+  .stat-sub{font-size:12px;color:#8A8D93;margin-top:2px;}
+
+  .card-row{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.85rem 1rem;margin-bottom:8px;gap:10px;cursor:pointer;}
+  .empty{text-align:center;padding:3rem 1rem;background:#fff;border:1px dashed #D8D4C8;border-radius:12px;}
+  .badge{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:20px;}
+  .chip{font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:20px;border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer;}
+  .chip.active{background:var(--ink);border-color:var(--ink);color:#fff;}
+  .charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;}
+  .chart-box{background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:1rem;height:260px;}
+
+  /* modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(36,39,43,.45);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
+  .modal-sheet{background:var(--bg);width:100%;max-width:520px;max-height:88vh;overflow-y:auto;border-radius:16px 16px 0 0;padding:1.25rem 1.25rem 1.75rem;}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+  .modal-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:18px;}
+  .x-btn{background:transparent;border:none;font-size:20px;line-height:1;color:var(--ink);}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .btn-danger-outline{margin-top:16px;width:100%;background:transparent;border:1px solid #E5B8AE;color:var(--red);border-radius:8px;padding:.6rem;font-weight:600;font-size:13.5px;}
+
+  .fund-card{background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:.9rem 1.1rem;margin-bottom:10px;}
+  .fund-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+  .fund-icon{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;}
+  .fund-bar-bg{height:6px;flex:1;background:#F0EEE6;border-radius:4px;overflow:hidden;margin-right:12px;}
+  .fund-bar-fill{height:100%;border-radius:4px;}
+  .percent-input{width:56px;text-align:right;font-family:'IBM Plex Mono',monospace;}
+
+  @media (max-width:480px){ .stat-grid{grid-template-columns:1fr 1fr;} }
+</style>
+</head>
+<body>
+
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">🚚</div>
+    <div class="display" style="text-align:center;font-size:19px;margin-bottom:2px;">CONTROLE DE FRETES</div>
+    <div style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:20px;">Acesso restrito — uso pessoal</div>
+    <div id="auth-error" class="auth-error hidden"></div>
+    <div class="field"><label>E-mail</label><input id="auth-email" type="email" placeholder="seuemail@exemplo.com" /></div>
+    <div class="field"><label>Senha</label><input id="auth-password" type="password" placeholder="Mínimo 6 caracteres" /></div>
+    <button id="auth-submit" class="btn-primary">Entrar</button>
+    <div style="text-align:center;margin-top:14px;">
+      <button id="auth-toggle" class="link-btn">Ainda não tenho conta — criar acesso</button>
+    </div>
+  </div>
+</div>
+
+<div id="app-shell" class="hidden">
+  <div id="wrap">
+    <header>
+      <div class="brand">
+        <div class="brand-icon">🚚</div>
+        <div>
+          <div class="brand-title">CONTROLE DE FRETES</div>
+          <div class="brand-sub">Baú próprio · gestão financeira</div>
+        </div>
+      </div>
+      <button id="logout-btn" class="link-btn">Sair</button>
+    </header>
+    <nav id="tab-nav"></nav>
+    <main><div id="view"></div></main>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+
+<script>
+/* ======================= CONFIGURAÇÃO DO FIREBASE =======================
+   Cole aqui as credenciais do SEU projeto Firebase (Configurações do projeto
+   > Geral > "Seus apps" > SDK setup and configuration).
+   ========================================================================= */
+const firebaseConfig = {
+  apiKey: "COLE_AQUI",
+  authDomain: "COLE_AQUI.firebaseapp.com",
+  projectId: "COLE_AQUI",
+  storageBucket: "COLE_AQUI.appspot.com",
+  messagingSenderId: "COLE_AQUI",
+  appId: "COLE_AQUI"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+try { db.enablePersistence({ synchronizeTabs: true }); } catch (e) { console.warn("Persistência offline não habilitada:", e); }
+
+/* ======================= DADOS ESTÁTICOS ======================= */
+const CATEGORIAS = [
+  { value:"combustivel", label:"Combustível", icon:"⛽", color:"#D98E2B" },
+  { value:"pneu", label:"Pneu", icon:"⚫", color:"#6B6F76" },
+  { value:"mecanica", label:"Mecânica/Manutenção", icon:"🔧", color:"#B84C3D" },
+  { value:"pedagio", label:"Pedágio", icon:"🛣️", color:"#3D7EA6" },
+  { value:"alimentacao", label:"Alimentação/Hospedagem", icon:"🍽️", color:"#7A6FB0" },
+  { value:"documentacao", label:"Documentação/Multas", icon:"📄", color:"#4A4E54" },
+  { value:"outros", label:"Outros", icon:"💰", color:"#8A8D93" },
+];
+const STATUS = {
+  planejado:{label:"Planejado",color:"#6B6F76",bg:"#EDEBE3"},
+  andamento:{label:"Em andamento",color:"#8A5A0C",bg:"#FAEEDA"},
+  finalizado:{label:"Finalizado",color:"#1E5A40",bg:"#E1F0E7"},
+};
+const FUNDOS_DEF = [
+  { key:"reinvestimento", label:"Reinvestimento", desc:"Reinvestir na empresa (caminhão, equipamentos, marketing)", icon:"📈", color:"#3D7EA6" },
+  { key:"emergencia", label:"Fundo de emergência", desc:"Reserva para imprevistos graves", icon:"🛡️", color:"#B84C3D" },
+  { key:"desgaste", label:"Fundo de desgaste", desc:"Depreciação do veículo, revisões grandes, pneus futuros", icon:"🔧", color:"#8A5A0C" },
+  { key:"viagem", label:"Fundo de despesas de viagem", desc:"Combustível, pedágio, alimentação das próximas viagens", icon:"💼", color:"#1E5A40" },
+];
+const DEFAULT_CONFIG = { reinvestimento:10, emergencia:5, desgaste:5, viagem:5 };
+const NAV = [
+  { key:"dashboard", label:"Painel", icon:"📊" },
+  { key:"fretes", label:"Fretes", icon:"🚚" },
+  { key:"agenda", label:"Agenda", icon:"📅" },
+  { key:"despesas", label:"Despesas", icon:"💵" },
+  { key:"gestao", label:"Gestão", icon:"🐖" },
+];
+
+/* ======================= ESTADO ======================= */
+let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", loaded:false };
+let unsubFretes=null, unsubDespesas=null, unsubConfig=null;
+let charts = {};
+
+/* ======================= HELPERS ======================= */
+function toBRL(n){ const v=Number.isFinite(n)?n:0; return v.toLocaleString("pt-BR",{style:"currency",currency:"BRL"}); }
+function toDateBR(iso){ if(!iso) return "—"; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; }
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+function esc(s){ return (s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function fretesCalc(){
+  return state.fretes.map(f=>{
+    const desp = state.despesas.filter(d=>d.freteId===f.id);
+    const totalDespesas = desp.reduce((s,d)=>s+Number(d.valor||0),0);
+    const faturamento = Number(f.faturamento||0);
+    const lucro = faturamento-totalDespesas;
+    const margem = faturamento>0 ? (lucro/faturamento)*100 : 0;
+    return {...f, despesasVinculadas:desp, totalDespesas, lucro, margem};
+  }).sort((a,b)=>(b.dataInicio||"").localeCompare(a.dataInicio||""));
+}
+function computeTotais(fc){
+  const finalizados = fc.filter(f=>f.status==="finalizado");
+  const andamento = fc.filter(f=>f.status==="andamento");
+  const planejados = fc.filter(f=>f.status==="planejado");
+  const faturamentoTotal = fc.reduce((s,f)=>s+Number(f.faturamento||0),0);
+  const despesaTotal = state.despesas.reduce((s,d)=>s+Number(d.valor||0),0);
+  const lucroFinalizados = finalizados.reduce((s,f)=>s+f.lucro,0);
+  return { faturamentoTotal, despesaTotal, lucroFinalizados, qtdFinalizados:finalizados.length, qtdAndamento:andamento.length, qtdPlanejados:planejados.length, finalizados, andamento, planejados };
+}
+
+/* ======================= AUTENTICAÇÃO ======================= */
+let isRegisterMode=false;
+document.getElementById("auth-toggle").addEventListener("click",()=>{
+  isRegisterMode=!isRegisterMode;
+  document.getElementById("auth-submit").textContent = isRegisterMode ? "Criar acesso" : "Entrar";
+  document.getElementById("auth-toggle").textContent = isRegisterMode ? "Já tenho conta — entrar" : "Ainda não tenho conta — criar acesso";
+});
+document.getElementById("auth-submit").addEventListener("click", async ()=>{
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const errBox = document.getElementById("auth-error");
+  errBox.classList.add("hidden");
+  if(!email || !password){ errBox.textContent="Preencha e-mail e senha."; errBox.classList.remove("hidden"); return; }
+  try{
+    if(isRegisterMode){ await auth.createUserWithEmailAndPassword(email,password); }
+    else { await auth.signInWithEmailAndPassword(email,password); }
+  }catch(e){
+    errBox.textContent = traduzErroAuth(e.code);
+    errBox.classList.remove("hidden");
+  }
+});
+function traduzErroAuth(code){
+  const map = {
+    "auth/invalid-email":"E-mail inválido.",
+    "auth/user-not-found":"Usuário não encontrado.",
+    "auth/wrong-password":"Senha incorreta.",
+    "auth/invalid-credential":"E-mail ou senha incorretos.",
+    "auth/email-already-in-use":"Esse e-mail já tem uma conta — tente entrar.",
+    "auth/weak-password":"A senha precisa ter pelo menos 6 caracteres.",
+  };
+  return map[code] || "Não foi possível autenticar. Tente novamente.";
+}
+document.getElementById("logout-btn").addEventListener("click",()=>auth.signOut());
+
+auth.onAuthStateChanged(user=>{
+  if(user){
+    state.uid=user.uid;
+    document.getElementById("auth-screen").classList.add("hidden");
+    document.getElementById("app-shell").classList.remove("hidden");
+    subscribeData(user.uid);
+  } else {
+    state.uid=null; state.loaded=false;
+    if(unsubFretes) unsubFretes(); if(unsubDespesas) unsubDespesas(); if(unsubConfig) unsubConfig();
+    document.getElementById("app-shell").classList.add("hidden");
+    document.getElementById("auth-screen").classList.remove("hidden");
+  }
+});
+
+/* ======================= FIRESTORE ======================= */
+function subscribeData(uid){
+  const base = db.collection("users").doc(uid);
+  unsubFretes = base.collection("fretes").onSnapshot(snap=>{
+    state.fretes = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    state.loaded=true;
+    render();
+  });
+  unsubDespesas = base.collection("despesas").onSnapshot(snap=>{
+    state.despesas = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    render();
+  });
+  unsubConfig = base.collection("meta").doc("config").onSnapshot(doc=>{
+    if(doc.exists) state.config = {...DEFAULT_CONFIG, ...doc.data()};
+    if(document.activeElement && document.activeElement.classList.contains("percent-input")) return;
+    render();
+  });
+}
+function colFretes(){ return db.collection("users").doc(state.uid).collection("fretes"); }
+function colDespesas(){ return db.collection("users").doc(state.uid).collection("despesas"); }
+function docConfig(){ return db.collection("users").doc(state.uid).collection("meta").doc("config"); }
+
+function salvarFrete(data){
+  const payload = {...data}; delete payload.id;
+  payload.faturamento = Number(payload.faturamento||0);
+  if(data.id){ colFretes().doc(data.id).set(payload,{merge:true}); }
+  else { colFretes().add(payload); }
+  fecharModal();
+}
+function excluirFrete(id){
+  colFretes().doc(id).delete();
+  state.despesas.filter(d=>d.freteId===id).forEach(d=>colDespesas().doc(d.id).delete());
+  fecharModal();
+}
+function salvarDespesa(data){
+  const payload = {...data}; delete payload.id;
+  payload.valor = Number(payload.valor||0);
+  if(!payload.freteId) payload.freteId = null;
+  if(data.id){ colDespesas().doc(data.id).set(payload,{merge:true}); }
+  else { colDespesas().add(payload); }
+  fecharModal();
+}
+function excluirDespesa(id){ colDespesas().doc(id).delete(); }
+function salvarConfig(cfg){ docConfig().set(cfg,{merge:true}); }
+
+/* ======================= NAV ======================= */
+function renderNav(){
+  const totais = computeTotais(fretesCalc());
+  document.getElementById("tab-nav").innerHTML = NAV.map(n=>`
+    <button data-tab="${n.key}" class="${state.tab===n.key?'active':''}">
+      <span>${n.icon}</span> ${n.label}
+      ${n.key==="fretes" && totais.qtdAndamento>0 ? `<span class="nav-badge">${totais.qtdAndamento}</span>` : ""}
+    </button>`).join("");
+  document.querySelectorAll("#tab-nav button").forEach(b=>b.addEventListener("click",()=>{ state.tab=b.dataset.tab; render(); }));
+}
+
+/* ======================= RENDER PRINCIPAL ======================= */
+function render(){
+  if(!state.loaded){ document.getElementById("view").innerHTML = `<p style="color:var(--muted);padding:2rem 0;">Carregando seus dados…</p>`; return; }
+  renderNav();
+  const fc = fretesCalc();
+  const totais = computeTotais(fc);
+  const view = document.getElementById("view");
+  if(state.tab==="dashboard") view.innerHTML = viewDashboard(fc,totais);
+  if(state.tab==="fretes") view.innerHTML = viewFretes(fc);
+  if(state.tab==="agenda") view.innerHTML = viewAgenda(fc);
+  if(state.tab==="despesas") view.innerHTML = viewDespesas();
+  if(state.tab==="gestao") view.innerHTML = viewGestao(totais);
+  document.querySelector(".lane") || document.getElementById("wrap").insertAdjacentHTML("afterbegin","");
+  bindViewEvents(fc,totais);
+  if(state.tab==="dashboard") renderCharts(totais);
+}
+
+/* ======================= DASHBOARD ======================= */
+function viewDashboard(fc,totais){
+  const emAndamento = fc.filter(f=>f.status==="andamento").slice(0,4);
+  let html = `<div class="lane"></div>`;
+  html += `<div class="stat-grid">
+    <div class="stat-card"><div class="stat-label">Faturamento total</div><div class="stat-value">${toBRL(totais.faturamentoTotal)}</div></div>
+    <div class="stat-card bad"><div class="stat-label">Despesas totais</div><div class="stat-value">${toBRL(totais.despesaTotal)}</div></div>
+    <div class="stat-card good"><div class="stat-label">Lucro (fretes finalizados)</div><div class="stat-value">${toBRL(totais.lucroFinalizados)}</div></div>
+    <div class="stat-card amber"><div class="stat-label">Fretes em andamento</div><div class="stat-value">${totais.qtdAndamento}</div><div class="stat-sub">${totais.qtdFinalizados} finalizados · ${totais.qtdPlanejados} planejados</div></div>
+  </div>`;
+  if(emAndamento.length){
+    html += `<div class="section-title">Em andamento agora</div>`;
+    emAndamento.forEach(f=>{
+      html += `<div class="card-row" data-abrir="${f.id}">
+        <div><div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div>
+        <div style="font-size:12.5px;color:#8A8D93;">Saída ${toDateBR(f.dataInicio)} · gasto até agora ${toBRL(f.totalDespesas)}</div></div>
+        <span style="color:#8A8D93;">›</span></div>`;
+    });
+  }
+  html += `<div class="charts-grid">
+    <div><div class="section-title">Despesas por categoria</div><div class="chart-box"><canvas id="chart-cat"></canvas></div></div>
+    <div><div class="section-title">Lucro por frete (finalizados)</div><div class="chart-box"><canvas id="chart-lucro"></canvas></div></div>
+  </div>`;
+  if(fc.length===0){
+    html += `<div class="empty" style="margin-top:16px;"><div style="font-size:30px;">🚚</div>
+      <div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nenhum frete cadastrado</div>
+      <div style="font-size:13.5px;color:#8A8D93;margin-bottom:16px;">Cadastre seu primeiro frete para começar a acompanhar faturamento, despesas e lucro.</div>
+      <button class="btn-amber" style="margin:0 auto;" data-ir="fretes">Cadastrar frete</button></div>`;
+  }
+  return html;
+}
+function renderCharts(totais){
+  const catData = CATEGORIAS.map(c=>({label:c.label,color:c.color,value:state.despesas.filter(d=>d.categoria===c.value).reduce((s,d)=>s+Number(d.valor||0),0)})).filter(c=>c.value>0);
+  const ctxCat = document.getElementById("chart-cat");
+  if(ctxCat){
+    if(charts.cat) charts.cat.destroy();
+    charts.cat = new Chart(ctxCat,{ type:"doughnut", data:{ labels:catData.map(c=>c.label), datasets:[{ data:catData.map(c=>c.value), backgroundColor:catData.map(c=>c.color) }] }, options:{ plugins:{ legend:{ position:"bottom", labels:{ boxWidth:10, font:{size:11} } } } } });
+  }
+  const lucroData = totais.finalizados.slice(0,8).reverse();
+  const ctxL = document.getElementById("chart-lucro");
+  if(ctxL){
+    if(charts.lucro) charts.lucro.destroy();
+    charts.lucro = new Chart(ctxL,{ type:"bar", data:{ labels:lucroData.map(f=>`${(f.origem||"?").slice(0,10)}→${(f.destino||"?").slice(0,10)}`), datasets:[{ data:lucroData.map(f=>Math.round(f.lucro)), backgroundColor:lucroData.map(f=>f.lucro>=0?"#1E5A40":"#B84C3D") }] }, options:{ indexAxis:"y", plugins:{legend:{display:false}}, scales:{ x:{ ticks:{font:{size:11}} }, y:{ ticks:{font:{size:10}} } } } });
+  }
+}
+
+/* ======================= FRETES ======================= */
+function viewFretes(fc){
+  const lista = state.filtroStatus==="todos" ? fc : fc.filter(f=>f.status===state.filtroStatus);
+  let html = `<div class="lane"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      ${["todos","planejado","andamento","finalizado"].map(s=>`<button class="chip ${state.filtroStatus===s?'active':''}" data-filtro="${s}">${s==="todos"?"Todos":STATUS[s].label}</button>`).join("")}
+    </div>
+    <button class="btn-amber" data-novo-frete="1">+ Novo frete</button>
+  </div>`;
+  if(lista.length===0){
+    html += `<div class="empty"><div style="font-size:30px;">🚚</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nenhum frete aqui</div><div style="font-size:13.5px;color:#8A8D93;margin-bottom:16px;">Ajuste o filtro ou cadastre um novo frete.</div><button class="btn-amber" style="margin:0 auto;" data-novo-frete="1">+ Novo frete</button></div>`;
+  } else {
+    lista.forEach(f=>{
+      const s = STATUS[f.status]||STATUS.planejado;
+      html += `<div class="card-row">
+        <div style="flex:1;" data-abrir="${f.id}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;flex-wrap:wrap;">
+            <span style="font-weight:600;font-size:15px;">${esc(f.origem)} → ${esc(f.destino)}</span>
+            <span class="badge" style="color:${s.color};background:${s.bg};">${s.label}</span>
+          </div>
+          <div style="font-size:12.5px;color:#8A8D93;">${toDateBR(f.dataInicio)}${f.dataFim?` – ${toDateBR(f.dataFim)}`:""} · ${f.despesasVinculadas.length} despesa(s)</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="mono" style="font-weight:600;font-size:14.5px;color:${f.lucro>=0?'#1E5A40':'#B84C3D'};">${toBRL(f.lucro)}</div>
+          <div style="font-size:11.5px;color:#8A8D93;">fat. ${toBRL(f.faturamento)}</div>
+        </div>
+        <button style="background:transparent;border:none;padding:4px;" data-editar-frete="${f.id}">✏️</button>
+      </div>`;
+    });
+  }
+  return html;
+}
+
+/* ======================= AGENDA ======================= */
+function viewAgenda(fc){
+  const proximos = fc.filter(f=>f.status!=="finalizado").sort((a,b)=>(a.dataInicio||"").localeCompare(b.dataInicio||""));
+  const grupos = {};
+  proximos.forEach(f=>{ const mes=f.dataInicio?f.dataInicio.slice(0,7):"sem-data"; (grupos[mes]=grupos[mes]||[]).push(f); });
+  const meses = Object.keys(grupos).sort();
+  const nomesMes = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+  let html = `<div class="lane"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+    <div class="section-title" style="margin:0;">Próximos fretes</div>
+    <button class="btn-amber" data-novo-frete="1">+ Agendar</button>
+  </div>`;
+  if(meses.length===0){
+    html += `<div class="empty"><div style="font-size:30px;">📅</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Agenda vazia</div><div style="font-size:13.5px;color:#8A8D93;margin-bottom:16px;">Nenhum frete planejado ou em andamento no momento.</div><button class="btn-amber" style="margin:0 auto;" data-novo-frete="1">+ Agendar frete</button></div>`;
+  } else {
+    meses.forEach(mes=>{
+      const label = mes==="sem-data" ? "Sem data definida" : `${nomesMes[Number(mes.slice(5,7))-1]} de ${mes.slice(0,4)}`;
+      html += `<div style="font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px;">${label}</div>`;
+      grupos[mes].forEach(f=>{
+        const s = STATUS[f.status];
+        html += `<div class="card-row" data-abrir="${f.id}">
+          <div style="width:44px;text-align:center;flex-shrink:0;">
+            <div class="display" style="font-size:18px;line-height:1;">${f.dataInicio?f.dataInicio.slice(8,10):"--"}</div>
+            <div style="font-size:10.5px;color:#8A8D93;">${s.label}</div>
+          </div>
+          <div style="flex:1;"><div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div><div style="font-size:12px;color:#8A8D93;">Faturamento previsto ${toBRL(f.faturamento)}</div></div>
+          <span class="badge" style="color:${s.color};background:${s.bg};">${s.label}</span>
+        </div>`;
+      });
+    });
+  }
+  return html;
+}
+
+/* ======================= DESPESAS ======================= */
+function viewDespesas(){
+  const ordenadas = [...state.despesas].sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  const freteNome = id=>{ const f = state.fretes.find(x=>x.id===id); return f ? `${f.origem} → ${f.destino}` : "Geral (não vinculada)"; };
+  let html = `<div class="lane"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+    <div class="section-title" style="margin:0;">Todas as despesas</div>
+    <button class="btn-amber" data-nova-despesa="1">+ Nova despesa</button>
+  </div>`;
+  if(ordenadas.length===0){
+    html += `<div class="empty"><div style="font-size:30px;">💵</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nenhuma despesa lançada</div><div style="font-size:13.5px;color:#8A8D93;margin-bottom:16px;">Registre combustível, pneus, mecânica e outros gastos.</div><button class="btn-amber" style="margin:0 auto;" data-nova-despesa="1">+ Nova despesa</button></div>`;
+  } else {
+    ordenadas.forEach(d=>{
+      const cat = CATEGORIAS.find(c=>c.value===d.categoria) || CATEGORIAS[CATEGORIAS.length-1];
+      html += `<div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.7rem 1rem;margin-bottom:6px;">
+        <div style="width:34px;height:34px;border-radius:8px;background:${cat.color}22;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:15px;">${cat.icon}</div>
+        <div style="flex:1;min-width:0;"><div style="font-weight:600;font-size:14px;">${cat.label}${d.descricao?` · ${esc(d.descricao)}`:""}</div><div style="font-size:12px;color:#8A8D93;">${toDateBR(d.data)} · ${esc(freteNome(d.freteId))}</div></div>
+        <div class="mono" style="font-weight:600;font-size:14px;color:var(--red);">${toBRL(d.valor)}</div>
+        <button style="background:transparent;border:none;padding:3px;" data-editar-despesa="${d.id}">✏️</button>
+        <button style="background:transparent;border:none;padding:3px;" data-excluir-despesa="${d.id}">🗑️</button>
+      </div>`;
+    });
+  }
+  return html;
+}
+
+/* ======================= GESTÃO ======================= */
+function viewGestao(totais){
+  const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
+  const sobraLivre = totais.lucroFinalizados>0 ? totais.lucroFinalizados*(1-percentTotal/100) : 0;
+  let html = `<div class="lane"></div>
+  <div class="section-title">Base de cálculo</div>
+  <div style="background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:1rem 1.1rem;margin-bottom:20px;font-size:13.5px;color:#4A4E54;">
+    Os percentuais abaixo são aplicados automaticamente sobre o <strong>lucro dos fretes finalizados</strong> (<span id="lucro-base">${toBRL(totais.lucroFinalizados)}</span>), separando quanto guardar em cada fundo. Ajuste como preferir.
+  </div>
+  <div class="section-title">Percentuais de cada fundo</div>`;
+  FUNDOS_DEF.forEach(fd=>{
+    const percent = Number(state.config[fd.key]||0);
+    const valor = totais.lucroFinalizados>0 ? (totais.lucroFinalizados*percent)/100 : 0;
+    html += `<div class="fund-card" data-fundo="${fd.key}">
+      <div class="fund-head">
+        <div class="fund-icon" style="background:${fd.color}22;">${fd.icon}</div>
+        <div style="flex:1;min-width:160px;"><div style="font-weight:600;font-size:14.5px;">${fd.label}</div><div style="font-size:12px;color:#8A8D93;">${fd.desc}</div></div>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <input type="number" min="0" max="100" class="percent-input" data-percent="${fd.key}" value="${percent}" />
+          <span style="font-size:13px;color:var(--muted);">%</span>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="fund-bar-bg"><div class="fund-bar-fill" data-bar="${fd.key}" style="width:${Math.min(100,percent)}%;background:${fd.color};"></div></div>
+        <div class="mono" data-valor="${fd.key}" style="font-weight:600;font-size:15px;color:${fd.color};white-space:nowrap;">${toBRL(valor)}</div>
+      </div>
+    </div>`;
+  });
+  html += `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">
+    <div id="total-alocado-box" style="flex:1;min-width:200px;background:${percentTotal>100?'var(--red-bg)':'#F0EEE6'};border-radius:12px;padding:.9rem 1.1rem;">
+      <div id="total-alocado-label" style="font-size:12.5px;color:${percentTotal>100?'#8A2E1E':'var(--muted)'};font-weight:600;">${percentTotal>100?'⚠️ ':''}Total alocado</div>
+      <div id="total-alocado-valor" class="mono" style="font-size:20px;font-weight:600;">${percentTotal}%</div>
+      <div id="total-alocado-aviso" style="font-size:11.5px;color:#8A2E1E;margin-top:2px;">${percentTotal>100?'A soma passou de 100% do lucro.':''}</div>
+    </div>
+    <div style="flex:1;min-width:200px;background:var(--green-bg);border-radius:12px;padding:.9rem 1.1rem;">
+      <div style="font-size:12.5px;color:var(--green);font-weight:600;">Lucro livre (não alocado)</div>
+      <div id="sobra-livre" class="mono" style="font-size:20px;font-weight:600;color:var(--green);">${toBRL(sobraLivre)}</div>
+    </div>
+  </div>`;
+  return html;
+}
+
+/* ======================= EVENTOS DA VIEW ======================= */
+function bindViewEvents(fc,totais){
+  document.querySelectorAll("[data-abrir]").forEach(el=>el.addEventListener("click",()=>abrirDetalheFrete(el.dataset.abrir)));
+  document.querySelectorAll("[data-ir]").forEach(el=>el.addEventListener("click",()=>{ state.tab=el.dataset.ir; render(); }));
+  document.querySelectorAll("[data-novo-frete]").forEach(el=>el.addEventListener("click",()=>abrirModalFrete(null)));
+  document.querySelectorAll("[data-editar-frete]").forEach(el=>el.addEventListener("click",(e)=>{ e.stopPropagation(); abrirModalFrete(fc.find(f=>f.id===el.dataset.editarFrete)); }));
+  document.querySelectorAll("[data-nova-despesa]").forEach(el=>el.addEventListener("click",()=>abrirModalDespesa(null)));
+  document.querySelectorAll("[data-editar-despesa]").forEach(el=>el.addEventListener("click",()=>abrirModalDespesa(state.despesas.find(d=>d.id===el.dataset.editarDespesa))));
+  document.querySelectorAll("[data-excluir-despesa]").forEach(el=>el.addEventListener("click",()=>{ if(confirm("Excluir esta despesa?")) excluirDespesa(el.dataset.excluirDespesa); }));
+  document.querySelectorAll("[data-filtro]").forEach(el=>el.addEventListener("click",()=>{ state.filtroStatus=el.dataset.filtro; render(); }));
+
+  document.querySelectorAll(".percent-input").forEach(inp=>{
+    inp.addEventListener("input",()=>{
+      const key = inp.dataset.percent;
+      let val = Math.max(0, Math.min(100, Number(inp.value)||0));
+      state.config[key] = val;
+      const lucroBase = totais.lucroFinalizados;
+      const valor = lucroBase>0 ? (lucroBase*val)/100 : 0;
+      document.querySelector(`[data-bar="${key}"]`).style.width = Math.min(100,val)+"%";
+      document.querySelector(`[data-valor="${key}"]`).textContent = toBRL(valor);
+      const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
+      document.getElementById("total-alocado-valor").textContent = percentTotal+"%";
+      const over = percentTotal>100;
+      document.getElementById("total-alocado-box").style.background = over ? "var(--red-bg)" : "#F0EEE6";
+      document.getElementById("total-alocado-label").style.color = over ? "#8A2E1E" : "var(--muted)";
+      document.getElementById("total-alocado-label").textContent = (over?"⚠️ ":"")+"Total alocado";
+      document.getElementById("total-alocado-aviso").textContent = over ? "A soma passou de 100% do lucro." : "";
+      const sobra = lucroBase>0 ? lucroBase*(1-percentTotal/100) : 0;
+      document.getElementById("sobra-livre").textContent = toBRL(sobra);
+    });
+    inp.addEventListener("change",()=>salvarConfig(state.config));
+  });
+}
+
+/* ======================= MODAIS ======================= */
+function fecharModal(){ document.getElementById("modal-root").innerHTML=""; }
+
+function abrirModalFrete(frete){
+  const f = frete || { origem:"", destino:"", dataInicio:todayISO(), dataFim:"", status:"planejado", faturamento:"", observacoes:"" };
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+  <div class="modal-overlay" id="ov-frete">
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-head"><div class="modal-title">${f.id?"Editar frete":"Novo frete"}</div><button class="x-btn" id="fechar-frete">✕</button></div>
+      <div class="grid-2">
+        <div class="field"><label>Origem</label><input id="fr-origem" value="${esc(f.origem)}" placeholder="Nova Xavantina" /></div>
+        <div class="field"><label>Destino</label><input id="fr-destino" value="${esc(f.destino)}" placeholder="Cuiabá" /></div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>Data de saída</label><input type="date" id="fr-inicio" value="${f.dataInicio||""}" /></div>
+        <div class="field"><label>Data de entrega (opcional)</label><input type="date" id="fr-fim" value="${f.dataFim||""}" /></div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>Status</label><select id="fr-status">${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${f.status===k?"selected":""}>${v.label}</option>`).join("")}</select></div>
+        <div class="field"><label>Faturamento (R$)</label><input type="number" step="0.01" id="fr-fat" value="${f.faturamento}" placeholder="0,00" /></div>
+      </div>
+      <div class="field"><label>Observações</label><textarea id="fr-obs" rows="3" placeholder="Cliente, carga, contato...">${esc(f.observacoes)}</textarea></div>
+      <button class="btn-primary" id="salvar-frete">Salvar frete</button>
+      ${f.id ? `<button class="btn-danger-outline" id="excluir-frete">🗑️ Excluir</button>` : ""}
+    </div>
+  </div>`;
+  document.getElementById("ov-frete").addEventListener("click",fecharModal);
+  document.getElementById("fechar-frete").addEventListener("click",fecharModal);
+  document.getElementById("salvar-frete").addEventListener("click",()=>{
+    salvarFrete({
+      id:f.id, origem:document.getElementById("fr-origem").value.trim(), destino:document.getElementById("fr-destino").value.trim(),
+      dataInicio:document.getElementById("fr-inicio").value, dataFim:document.getElementById("fr-fim").value,
+      status:document.getElementById("fr-status").value, faturamento:document.getElementById("fr-fat").value,
+      observacoes:document.getElementById("fr-obs").value.trim(),
+    });
+  });
+  if(f.id) document.getElementById("excluir-frete").addEventListener("click",()=>{ if(confirm("Excluir este frete e suas despesas vinculadas?")) excluirFrete(f.id); });
+}
+
+function abrirModalDespesa(despesa){
+  const d = despesa || { categoria:"combustivel", valor:"", data:todayISO(), freteId:"", descricao:"" };
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+  <div class="modal-overlay" id="ov-despesa">
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-head"><div class="modal-title">${d.id?"Editar despesa":"Nova despesa"}</div><button class="x-btn" id="fechar-despesa">✕</button></div>
+      <div class="field"><label>Categoria</label><select id="de-cat">${CATEGORIAS.map(c=>`<option value="${c.value}" ${d.categoria===c.value?"selected":""}>${c.label}</option>`).join("")}</select></div>
+      <div class="grid-2">
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="de-valor" value="${d.valor}" placeholder="0,00" /></div>
+        <div class="field"><label>Data</label><input type="date" id="de-data" value="${d.data||""}" /></div>
+      </div>
+      <div class="field"><label>Frete vinculado (opcional)</label>
+        <select id="de-frete"><option value="">Geral (não vinculada a um frete)</option>${state.fretes.map(f=>`<option value="${f.id}" ${d.freteId===f.id?"selected":""}>${esc(f.origem)} → ${esc(f.destino)} (${toDateBR(f.dataInicio)})</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>Descrição (opcional)</label><input id="de-desc" value="${esc(d.descricao)}" placeholder="Ex: troca de pneu dianteiro" /></div>
+      <button class="btn-primary" id="salvar-despesa">Salvar despesa</button>
+    </div>
+  </div>`;
+  document.getElementById("ov-despesa").addEventListener("click",fecharModal);
+  document.getElementById("fechar-despesa").addEventListener("click",fecharModal);
+  document.getElementById("salvar-despesa").addEventListener("click",()=>{
+    salvarDespesa({ id:d.id, categoria:document.getElementById("de-cat").value, valor:document.getElementById("de-valor").value, data:document.getElementById("de-data").value, freteId:document.getElementById("de-frete").value||null, descricao:document.getElementById("de-desc").value.trim() });
+  });
+}
+
+function abrirDetalheFrete(id){
+  const f = fretesCalc().find(x=>x.id===id);
+  if(!f) return;
+  const s = STATUS[f.status];
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+  <div class="modal-overlay" id="ov-det">
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-head"><div class="modal-title">${esc(f.origem)} → ${esc(f.destino)}</div><button class="x-btn" id="fechar-det">✕</button></div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;">
+        <span class="badge" style="color:${s.color};background:${s.bg};">${s.label}</span>
+        <span style="font-size:12.5px;color:#8A8D93;">${toDateBR(f.dataInicio)}${f.dataFim?` – ${toDateBR(f.dataFim)}`:""}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px;">
+        <div class="stat-card"><div class="stat-label">Faturamento</div><div class="stat-value" style="font-size:17px;">${toBRL(f.faturamento)}</div></div>
+        <div class="stat-card bad"><div class="stat-label">Despesas</div><div class="stat-value" style="font-size:17px;">${toBRL(f.totalDespesas)}</div></div>
+        <div class="stat-card ${f.lucro>=0?'good':'bad'}"><div class="stat-label">Lucro</div><div class="stat-value" style="font-size:17px;">${toBRL(f.lucro)}</div><div class="stat-sub">${f.margem.toFixed(1)}% margem</div></div>
+      </div>
+      ${f.observacoes ? `<div style="font-size:13.5px;color:#4A4E54;background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.75rem 1rem;margin-bottom:16px;">${esc(f.observacoes)}</div>` : ""}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="section-title" style="margin:0;">Despesas deste frete</div>
+        <button id="add-desp-frete" style="display:flex;align-items:center;gap:4px;background:transparent;border:1px solid var(--line);border-radius:8px;padding:4px 9px;font-size:12.5px;font-weight:600;">+ Adicionar</button>
+      </div>
+      <div style="margin-bottom:14px;">
+        ${f.despesasVinculadas.length===0 ? `<div style="font-size:13px;color:#8A8D93;">Nenhuma despesa lançada para este frete ainda.</div>` :
+          f.despesasVinculadas.map(d=>{ const cat=CATEGORIAS.find(c=>c.value===d.categoria)||CATEGORIAS[CATEGORIAS.length-1]; return `<div style="display:flex;justify-content:space-between;background:#fff;border:1px solid #E9E6DC;border-radius:8px;padding:.55rem .8rem;font-size:13px;margin-bottom:6px;"><span>${cat.label}${d.descricao?` · ${esc(d.descricao)}`:""}</span><span class="mono" style="font-weight:600;color:var(--red);">${toBRL(d.valor)}</span></div>`; }).join("")}
+      </div>
+      <button class="btn-primary" id="editar-det">Editar frete</button>
+      <button class="btn-danger-outline" id="excluir-det">🗑️ Excluir</button>
+    </div>
+  </div>`;
+  document.getElementById("ov-det").addEventListener("click",fecharModal);
+  document.getElementById("fechar-det").addEventListener("click",fecharModal);
+  document.getElementById("editar-det").addEventListener("click",()=>abrirModalFrete(f));
+  document.getElementById("excluir-det").addEventListener("click",()=>{ if(confirm("Excluir este frete e suas despesas vinculadas?")) excluirFrete(f.id); });
+  document.getElementById("add-desp-frete").addEventListener("click",()=>abrirModalDespesa({ freteId:f.id, categoria:"combustivel", valor:"", data:todayISO(), descricao:"" }));
+}
+
+/* PWA service worker */
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+}
+</script>
+</body>
+</html>

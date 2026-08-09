@@ -1,0 +1,15 @@
+{
+  "name": "Controle de Fretes",
+  "short_name": "Fretes",
+  "description": "Gestão financeira do frete: faturamento, despesas, lucratividade e fundos.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F5F3EE",
+  "theme_color": "#24272B",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
