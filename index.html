@@ -525,7 +525,7 @@ function viewDashboard(fc,totais){
     <div class="stat-card blue"><div class="stat-label">Mão de obra (motoristas)</div><div class="stat-value">${toBRL(totais.motoristasTotal)}</div></div>
     <div class="stat-card good"><div class="stat-label">Lucro recebido</div><div class="stat-value">${toBRL(totais.lucroRecebido)}</div><div class="stat-sub">de ${toBRL(totais.lucroFinalizados)} já faturados</div></div>
     <div class="stat-card amber"><div class="stat-label">A receber</div><div class="stat-value">${toBRL(totais.totalAReceber)}</div><div class="stat-sub">${totais.qtdAReceber} frete(s) finalizado(s)</div></div>
-    <div class="stat-card"><div class="stat-label">Fretes em andamento</div><div class="stat-value">${totais.qtdAndamento}</div><div class="stat-sub">${totais.qtdFinalizados} finalizados · ${totais.qtdPlanejados} planejados</div></div>
+    <div class="stat-card"><div class="stat-label">Fretes agendados</div><div class="stat-value">${totais.qtdPlanejados}</div><div class="stat-sub">${totais.qtdAndamento} em andamento · ${totais.qtdFinalizados} finalizados</div></div>
   </div>`;
   if(emAndamento.length){
     html += `<div class="section-title">Em andamento agora</div>`;
