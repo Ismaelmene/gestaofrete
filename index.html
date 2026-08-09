@@ -313,6 +313,12 @@ function salvarFrete(data){
   const payload = {...data}; delete payload.id;
   payload.faturamento = Number(payload.faturamento||0);
   payload.valorMotorista = Number(payload.valorMotorista||0);
+  payload.numeroViagens = Math.max(1, Number(payload.numeroViagens||1));
+  payload.valorViagem = Number(payload.valorViagem||0);
+  payload.kmIda = Number(payload.kmIda||0);
+  payload.kmVolta = Number(payload.kmVolta||0);
+  payload.valorPorViagemMotorista = Number(payload.valorPorViagemMotorista||0);
+  payload.valorPorKmMotorista = Number(payload.valorPorKmMotorista||0);
   if(data.id){ colFretes().doc(data.id).set(payload,{merge:true}); }
   else { colFretes().add(payload); }
   fecharModal();
@@ -664,9 +670,10 @@ function bindViewEvents(fc,totais){
 function fecharModal(){ document.getElementById("modal-root").innerHTML=""; }
 
 function abrirModalFrete(frete){
-  const f = frete || { origem:"", destino:"", dataInicio:todayISO(), dataFim:"", status:"planejado", faturamento:"", observacoes:"" };
+  const f = frete || { origem:"", destino:"", dataInicio:todayISO(), dataFim:"", status:"planejado", numeroViagens:1, valorViagem:"", kmIda:"", kmVolta:"", tipoPagamentoMotorista:"viagem", valorPorViagemMotorista:"", valorPorKmMotorista:"", observacoes:"" };
   const statusPagamento = f.statusPagamento || "a_receber";
   const dataPagamento = f.dataPagamento || todayISO();
+  const tipoPag = f.tipoPagamentoMotorista || "viagem";
   const root = document.getElementById("modal-root");
   root.innerHTML = `
   <div class="modal-overlay" id="ov-frete">
@@ -680,10 +687,26 @@ function abrirModalFrete(frete){
         <div class="field"><label>Data de saída</label><input type="date" id="fr-inicio" value="${f.dataInicio||""}" /></div>
         <div class="field"><label>Data de entrega (opcional)</label><input type="date" id="fr-fim" value="${f.dataFim||""}" /></div>
       </div>
-      <div class="grid-2">
-        <div class="field"><label>Status</label><select id="fr-status">${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${f.status===k?"selected":""}>${v.label}</option>`).join("")}</select></div>
-        <div class="field"><label>Faturamento (R$)</label><input type="number" step="0.01" id="fr-fat" value="${f.faturamento}" placeholder="0,00" /></div>
+      <div class="field"><label>Status</label><select id="fr-status">${Object.entries(STATUS).map(([k,v])=>`<option value="${k}" ${f.status===k?"selected":""}>${v.label}</option>`).join("")}</select></div>
+
+      <div style="background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.85rem 1rem;margin-bottom:12px;">
+        <div style="font-size:12.5px;font-weight:600;color:#4A4E54;margin-bottom:8px;">Viagens e quilometragem</div>
+        <div class="grid-2">
+          <div class="field"><label>Número de viagens</label><input type="number" min="1" step="1" id="fr-viagens" value="${f.numeroViagens||1}" /></div>
+          <div class="field"><label>Valor por viagem (R$)</label><input type="number" step="0.01" id="fr-valor-viagem" value="${f.valorViagem||""}" placeholder="0,00" /></div>
+        </div>
+        <div class="grid-2" style="margin-bottom:0;">
+          <div class="field" style="margin-bottom:0;"><label>Km de ida</label><input type="number" step="1" id="fr-km-ida" value="${f.kmIda||""}" placeholder="0" /></div>
+          <div class="field" style="margin-bottom:0;"><label>Km de volta</label><input type="number" step="1" id="fr-km-volta" value="${f.kmVolta||""}" placeholder="0" /></div>
+        </div>
       </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--green-bg);border-radius:10px;padding:.75rem 1rem;margin-bottom:12px;">
+        <span style="font-size:13px;color:var(--green);font-weight:600;">Faturamento total (viagens × valor por viagem)</span>
+        <span id="fr-fat-total" class="mono" style="font-size:16px;font-weight:600;color:var(--green);">${toBRL(Number(f.faturamento||0))}</span>
+      </div>
+      <input type="hidden" id="fr-fat" value="${f.faturamento||0}" />
+
       <div id="fr-pagamento-wrap" class="${f.status==="finalizado"?"":"hidden"}" style="background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.85rem 1rem;margin-bottom:12px;">
         <div class="grid-2">
           <div class="field" style="margin-bottom:${statusPagamento==='pago'?'12px':'0'};"><label>Situação do pagamento</label>
@@ -695,15 +718,32 @@ function abrirModalFrete(frete){
           <div class="field ${statusPagamento==='pago'?'':'hidden'}" id="fr-data-pag-wrap" style="margin-bottom:0;"><label>Data do recebimento</label><input type="date" id="fr-data-pagamento" value="${dataPagamento}" /></div>
         </div>
       </div>
-      <div class="grid-2">
+
+      <div style="background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.85rem 1rem;margin-bottom:12px;">
+        <div style="font-size:12.5px;font-weight:600;color:#4A4E54;margin-bottom:8px;">Motorista</div>
         <div class="field"><label>Motorista (opcional)</label>
           <select id="fr-motorista">
             <option value="">Nenhum</option>
             ${state.motoristas.map(m=>`<option value="${m.id}" ${f.motoristaId===m.id?"selected":""}>${esc(m.nome)}</option>`).join("")}
           </select>
         </div>
-        <div class="field"><label>Valor do motorista (R$)</label><input type="number" step="0.01" id="fr-valor-motorista" value="${f.valorMotorista||""}" placeholder="0,00" /></div>
+        <div class="field"><label>Motorista recebe por</label>
+          <select id="fr-tipo-pag-motorista">
+            <option value="viagem" ${tipoPag==="viagem"?"selected":""}>Viagem</option>
+            <option value="km" ${tipoPag==="km"?"selected":""}>Km rodado (ida + volta)</option>
+          </select>
+        </div>
+        <div class="grid-2" style="margin-bottom:0;">
+          <div class="field ${tipoPag==='km'?'hidden':''}" id="fr-valor-viagem-mot-wrap" style="margin-bottom:0;"><label>Valor por viagem (R$)</label><input type="number" step="0.01" id="fr-valor-viagem-motorista" value="${f.valorPorViagemMotorista||""}" placeholder="0,00" /></div>
+          <div class="field ${tipoPag==='km'?'':'hidden'}" id="fr-valor-km-mot-wrap" style="margin-bottom:0;"><label>Valor por km (R$)</label><input type="number" step="0.01" id="fr-valor-km-motorista" value="${f.valorPorKmMotorista||""}" placeholder="0,00" /></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+          <span style="font-size:12.5px;color:#8A8D93;">Total do motorista</span>
+          <span id="fr-valor-motorista-total" class="mono" style="font-size:15px;font-weight:600;">${toBRL(Number(f.valorMotorista||0))}</span>
+        </div>
+        <input type="hidden" id="fr-valor-motorista" value="${f.valorMotorista||0}" />
       </div>
+
       <div class="field"><label>Observações</label><textarea id="fr-obs" rows="3" placeholder="Cliente, carga, contato...">${esc(f.observacoes)}</textarea></div>
       <button class="btn-primary" id="salvar-frete">Salvar frete</button>
       ${f.id ? `<button class="btn-danger-outline" id="excluir-frete">🗑️ Excluir</button>` : ""}
@@ -717,16 +757,47 @@ function abrirModalFrete(frete){
   document.getElementById("fr-pagamento").addEventListener("change",(e)=>{
     document.getElementById("fr-data-pag-wrap").classList.toggle("hidden", e.target.value!=="pago");
   });
+  document.getElementById("fr-tipo-pag-motorista").addEventListener("change",(e)=>{
+    document.getElementById("fr-valor-viagem-mot-wrap").classList.toggle("hidden", e.target.value==="km");
+    document.getElementById("fr-valor-km-mot-wrap").classList.toggle("hidden", e.target.value!=="km");
+    recalcularFrete();
+  });
+  ["fr-viagens","fr-valor-viagem","fr-km-ida","fr-km-volta","fr-valor-viagem-motorista","fr-valor-km-motorista"].forEach(id=>{
+    document.getElementById(id).addEventListener("input", recalcularFrete);
+  });
+  function recalcularFrete(){
+    const viagens = Math.max(1, Number(document.getElementById("fr-viagens").value)||1);
+    const valorViagem = Number(document.getElementById("fr-valor-viagem").value)||0;
+    const faturamento = viagens*valorViagem;
+    document.getElementById("fr-fat").value = faturamento;
+    document.getElementById("fr-fat-total").textContent = toBRL(faturamento);
+
+    const kmIda = Number(document.getElementById("fr-km-ida").value)||0;
+    const kmVolta = Number(document.getElementById("fr-km-volta").value)||0;
+    const kmTotalGeral = (kmIda+kmVolta)*viagens;
+    const tipo = document.getElementById("fr-tipo-pag-motorista").value;
+    let totalMotorista = 0;
+    if(tipo==="km"){ totalMotorista = kmTotalGeral*(Number(document.getElementById("fr-valor-km-motorista").value)||0); }
+    else { totalMotorista = viagens*(Number(document.getElementById("fr-valor-viagem-motorista").value)||0); }
+    document.getElementById("fr-valor-motorista").value = totalMotorista;
+    document.getElementById("fr-valor-motorista-total").textContent = toBRL(totalMotorista);
+  }
   document.getElementById("salvar-frete").addEventListener("click",()=>{
     const novoStatus = document.getElementById("fr-status").value;
     const novoStatusPag = document.getElementById("fr-pagamento").value;
     salvarFrete({
       id:f.id, origem:document.getElementById("fr-origem").value.trim(), destino:document.getElementById("fr-destino").value.trim(),
       dataInicio:document.getElementById("fr-inicio").value, dataFim:document.getElementById("fr-fim").value,
-      status:novoStatus, faturamento:document.getElementById("fr-fat").value,
+      status:novoStatus,
+      numeroViagens:document.getElementById("fr-viagens").value, valorViagem:document.getElementById("fr-valor-viagem").value,
+      kmIda:document.getElementById("fr-km-ida").value, kmVolta:document.getElementById("fr-km-volta").value,
+      faturamento:document.getElementById("fr-fat").value,
       statusPagamento: novoStatus==="finalizado" ? novoStatusPag : null,
       dataPagamento: (novoStatus==="finalizado" && novoStatusPag==="pago") ? document.getElementById("fr-data-pagamento").value : null,
       motoristaId: document.getElementById("fr-motorista").value || null,
+      tipoPagamentoMotorista: document.getElementById("fr-tipo-pag-motorista").value,
+      valorPorViagemMotorista: document.getElementById("fr-valor-viagem-motorista").value,
+      valorPorKmMotorista: document.getElementById("fr-valor-km-motorista").value,
       valorMotorista: document.getElementById("fr-valor-motorista").value,
       observacoes:document.getElementById("fr-obs").value.trim(),
     });
@@ -801,6 +872,7 @@ function abrirDetalheFrete(id){
         ${f.status==="finalizado" ? `<span class="badge" style="color:${STATUS_PAG[f.statusPagamento].color};background:${STATUS_PAG[f.statusPagamento].bg};">${STATUS_PAG[f.statusPagamento].label}</span>` : ""}
         <span style="font-size:12.5px;color:#8A8D93;">${toDateBR(f.dataInicio)}${f.dataFim?` – ${toDateBR(f.dataFim)}`:""}</span>
       </div>
+      ${(f.numeroViagens>1 || f.kmIda || f.kmVolta) ? `<div style="font-size:12.5px;color:#8A8D93;margin-bottom:14px;">${f.numeroViagens||1} viagem(ns)${(f.kmIda||f.kmVolta)?` · ${(Number(f.kmIda||0)+Number(f.kmVolta||0))} km/viagem (ida ${f.kmIda||0} + volta ${f.kmVolta||0})`:""}</div>` : ""}
       ${f.status==="finalizado" ? `<button id="toggle-pagamento" class="btn-amber" style="margin-bottom:14px;">${f.statusPagamento==="pago"?"Marcar como a receber":"Marcar como pago"}</button>` : ""}
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
         <div class="stat-card"><div class="stat-label">Faturamento</div><div class="stat-value" style="font-size:17px;">${toBRL(f.faturamento)}</div></div>
