@@ -22,6 +22,7 @@
     --amber:#D98E2B; --amber-bg:#FAEEDA; --amber-ink:#8A5A0C;
     --green:#1E5A40; --green-bg:#E1F0E7;
     --red:#B84C3D; --red-bg:#F9E3DF;
+    --blue:#3D7EA6; --blue-bg:#E1EDF5; --blue-ink:#1B4A66;
   }
   *{box-sizing:border-box;}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
@@ -64,14 +65,17 @@
   .stat-card.good{background:var(--green-bg);}
   .stat-card.bad{background:var(--red-bg);}
   .stat-card.amber{background:var(--amber-bg);}
+  .stat-card.blue{background:var(--blue-bg);}
   .stat-label{font-size:12.5px;color:var(--muted);font-weight:500;margin-bottom:4px;}
   .stat-card.good .stat-label{color:var(--green);}
   .stat-card.bad .stat-label{color:#8A2E1E;}
   .stat-card.amber .stat-label{color:var(--amber-ink);}
+  .stat-card.blue .stat-label{color:var(--blue-ink);}
   .stat-value{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;}
   .stat-card.good .stat-value{color:var(--green);}
   .stat-card.bad .stat-value{color:#8A2E1E;}
   .stat-card.amber .stat-value{color:var(--amber-ink);}
+  .stat-card.blue .stat-value{color:var(--blue-ink);}
   .stat-sub{font-size:12px;color:#8A8D93;margin-top:2px;}
 
   .card-row{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.85rem 1rem;margin-bottom:8px;gap:10px;cursor:pointer;}
@@ -97,6 +101,8 @@
   .fund-bar-bg{height:6px;flex:1;background:#F0EEE6;border-radius:4px;overflow:hidden;margin-right:12px;}
   .fund-bar-fill{height:100%;border-radius:4px;}
   .percent-input{width:56px;text-align:right;font-family:'IBM Plex Mono',monospace;}
+  .warn-banner{background:var(--red-bg);color:#8A2E1E;border-radius:10px;padding:.75rem 1rem;font-size:13px;margin-bottom:16px;display:flex;align-items:center;gap:8px;}
+  .subnav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
 
   @media (max-width:480px){ .stat-grid{grid-template-columns:1fr 1fr;} }
 </style>
@@ -182,20 +188,22 @@ const FUNDOS_DEF = [
   { key:"desgaste", label:"Fundo de desgaste", desc:"Depreciação do veículo, revisões grandes, pneus futuros", icon:"🔧", color:"#8A5A0C" },
   { key:"viagem", label:"Fundo de despesas de viagem", desc:"Combustível, pedágio, alimentação das próximas viagens", icon:"💼", color:"#1E5A40" },
 ];
-const DEFAULT_CONFIG = { reinvestimento:10, emergencia:5, desgaste:5, viagem:5 };
+const DEFAULT_CONFIG = { reinvestimento:10, emergencia:5, desgaste:5, viagem:5, tetoGastoMensal:0 };
 const NAV = [
   { key:"dashboard", label:"Painel", icon:"📊" },
   { key:"fretes", label:"Fretes", icon:"🚚" },
   { key:"agenda", label:"Agenda", icon:"📅" },
   { key:"receber", label:"A Receber", icon:"🧾" },
+  { key:"pagar", label:"Contas a Pagar", icon:"📌" },
   { key:"despesas", label:"Despesas", icon:"💵" },
   { key:"motoristas", label:"Motoristas", icon:"🧑‍✈️" },
   { key:"gestao", label:"Gestão", icon:"🐖" },
+  { key:"configgestao", label:"Config. Gestão", icon:"⚙️" },
 ];
 
 /* ======================= ESTADO ======================= */
-let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], motoristas:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", loaded:false };
-let unsubFretes=null, unsubDespesas=null, unsubConfig=null, unsubMotoristas=null;
+let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], motoristas:[], contasPagar:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", subTabPagar:"gerais", loaded:false };
+let unsubFretes=null, unsubDespesas=null, unsubConfig=null, unsubMotoristas=null, unsubContasPagar=null;
 let charts = {};
 
 /* ======================= HELPERS ======================= */
@@ -214,7 +222,8 @@ function fretesCalc(){
     const lucro = faturamento-totalDespesas-valorMotorista;
     const margem = faturamento>0 ? (lucro/faturamento)*100 : 0;
     const statusPagamento = f.status==="finalizado" ? (f.statusPagamento || "a_receber") : null;
-    return {...f, despesasVinculadas:desp, totalDespesas, valorMotorista, motoristaNome: motorista ? motorista.nome : null, lucro, margem, statusPagamento};
+    const motoristaPago = !!f.motoristaPago;
+    return {...f, despesasVinculadas:desp, totalDespesas, valorMotorista, motoristaNome: motorista ? motorista.nome : null, lucro, margem, statusPagamento, motoristaPago};
   }).sort((a,b)=>(b.dataInicio||"").localeCompare(a.dataInicio||""));
 }
 function computeTotais(fc){
@@ -229,9 +238,26 @@ function computeTotais(fc){
   const lucroFinalizados = finalizados.reduce((s,f)=>s+f.lucro,0);
   const lucroRecebido = pagos.reduce((s,f)=>s+f.lucro,0);
   const totalAReceber = aReceber.reduce((s,f)=>s+Number(f.faturamento||0),0);
+
+  const motoristasAPagar = fc.filter(f=>f.motoristaId && Number(f.valorMotorista||0)>0 && !f.motoristaPago);
+  const motoristasPagos = fc.filter(f=>f.motoristaId && Number(f.valorMotorista||0)>0 && f.motoristaPago);
+  const totalMotoristasAPagar = motoristasAPagar.reduce((s,f)=>s+Number(f.valorMotorista||0),0);
+
+  const contasPendentes = state.contasPagar.filter(c=>!c.pago);
+  const contasPagas = state.contasPagar.filter(c=>c.pago);
+  const totalContasPendentes = contasPendentes.reduce((s,c)=>s+Number(c.valor||0),0);
+
+  const mesAtual = todayISO().slice(0,7);
+  const despesasMes = state.despesas.filter(d=>(d.data||"").slice(0,7)===mesAtual);
+  const totalDespesasMes = despesasMes.reduce((s,d)=>s+Number(d.valor||0),0) + contasPagas.filter(c=>(c.dataPagamento||"").slice(0,7)===mesAtual).reduce((s,c)=>s+Number(c.valor||0),0);
+  const faturamentoMes = fc.filter(f=>(f.dataInicio||"").slice(0,7)===mesAtual).reduce((s,f)=>s+Number(f.faturamento||0),0);
+
   return { faturamentoTotal, despesaTotal, motoristasTotal, lucroFinalizados, lucroRecebido, totalAReceber,
     qtdFinalizados:finalizados.length, qtdAndamento:andamento.length, qtdPlanejados:planejados.length, qtdAReceber:aReceber.length,
-    finalizados, andamento, planejados, pagos, aReceber };
+    finalizados, andamento, planejados, pagos, aReceber,
+    motoristasAPagar, motoristasPagos, totalMotoristasAPagar,
+    contasPendentes, contasPagas, totalContasPendentes,
+    totalDespesasMes, faturamentoMes, mesAtual };
 }
 
 /* ======================= AUTENTICAÇÃO ======================= */
@@ -276,7 +302,7 @@ auth.onAuthStateChanged(user=>{
     subscribeData(user.uid);
   } else {
     state.uid=null; state.loaded=false;
-    if(unsubFretes) unsubFretes(); if(unsubDespesas) unsubDespesas(); if(unsubConfig) unsubConfig(); if(unsubMotoristas) unsubMotoristas();
+    if(unsubFretes) unsubFretes(); if(unsubDespesas) unsubDespesas(); if(unsubConfig) unsubConfig(); if(unsubMotoristas) unsubMotoristas(); if(unsubContasPagar) unsubContasPagar();
     document.getElementById("app-shell").classList.add("hidden");
     document.getElementById("auth-screen").classList.remove("hidden");
   }
@@ -303,10 +329,15 @@ function subscribeData(uid){
     state.motoristas = snap.docs.map(d=>({id:d.id, ...d.data()}));
     render();
   });
+  unsubContasPagar = base.collection("contasPagar").onSnapshot(snap=>{
+    state.contasPagar = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    render();
+  });
 }
 function colFretes(){ return db.collection("users").doc(state.uid).collection("fretes"); }
 function colDespesas(){ return db.collection("users").doc(state.uid).collection("despesas"); }
 function colMotoristas(){ return db.collection("users").doc(state.uid).collection("motoristas"); }
+function colContasPagar(){ return db.collection("users").doc(state.uid).collection("contasPagar"); }
 function docConfig(){ return db.collection("users").doc(state.uid).collection("meta").doc("config"); }
 
 function salvarFrete(data){
@@ -349,6 +380,20 @@ function excluirMotorista(id){
   if(state.fretes.some(f=>f.motoristaId===id)){ alert("Esse motorista está vinculado a um ou mais fretes. Remova o vínculo nos fretes antes de excluir."); return; }
   colMotoristas().doc(id).delete();
 }
+function marcarMotoristaPago(freteId){ colFretes().doc(freteId).set({ motoristaPago:true, dataPagamentoMotorista:todayISO() },{merge:true}); }
+function desfazerMotoristaPago(freteId){ colFretes().doc(freteId).set({ motoristaPago:false, dataPagamentoMotorista:null },{merge:true}); }
+function salvarContaPagar(data){
+  const payload = {...data}; delete payload.id;
+  payload.valor = Number(payload.valor||0);
+  if(data.id){ colContasPagar().doc(data.id).set(payload,{merge:true}); }
+  else { colContasPagar().add({...payload, pago:false}); }
+  fecharModal();
+}
+function excluirContaPagar(id){ colContasPagar().doc(id).delete(); }
+function marcarContaPaga(conta){
+  colContasPagar().doc(conta.id).set({ pago:true, dataPagamento:todayISO() },{merge:true});
+  colDespesas().add({ categoria:conta.categoria, valor:Number(conta.valor||0), data:todayISO(), freteId:null, descricao:conta.descricao||"" });
+}
 function salvarConfig(cfg){ docConfig().set(cfg,{merge:true}); }
 
 /* ======================= NAV ======================= */
@@ -359,6 +404,7 @@ function renderNav(){
       <span>${n.icon}</span> ${n.label}
       ${n.key==="fretes" && totais.qtdAndamento>0 ? `<span class="nav-badge">${totais.qtdAndamento}</span>` : ""}
       ${n.key==="receber" && totais.qtdAReceber>0 ? `<span class="nav-badge">${totais.qtdAReceber}</span>` : ""}
+      ${n.key==="pagar" && (totais.contasPendentes.length+totais.motoristasAPagar.length)>0 ? `<span class="nav-badge">${totais.contasPendentes.length+totais.motoristasAPagar.length}</span>` : ""}
     </button>`).join("");
   document.querySelectorAll("#tab-nav button").forEach(b=>b.addEventListener("click",()=>{ state.tab=b.dataset.tab; render(); }));
 }
@@ -374,22 +420,34 @@ function render(){
   if(state.tab==="fretes") view.innerHTML = viewFretes(fc);
   if(state.tab==="agenda") view.innerHTML = viewAgenda(fc);
   if(state.tab==="receber") view.innerHTML = viewReceber(totais);
+  if(state.tab==="pagar") view.innerHTML = viewPagar(totais);
   if(state.tab==="despesas") view.innerHTML = viewDespesas();
   if(state.tab==="motoristas") view.innerHTML = viewMotoristas(fc);
   if(state.tab==="gestao") view.innerHTML = viewGestao(totais);
+  if(state.tab==="configgestao") view.innerHTML = viewConfigGestao(totais);
   document.querySelector(".lane") || document.getElementById("wrap").insertAdjacentHTML("afterbegin","");
   bindViewEvents(fc,totais);
   if(state.tab==="dashboard") renderCharts(totais);
+  if(state.tab==="receber") renderBarraSelecaoReceber(totais);
+  if(state.tab==="pagar") renderBarraSelecaoPagar(totais);
+  if(state.tab==="gestao") renderChartGestao(totais);
 }
 
 /* ======================= DASHBOARD ======================= */
 function viewDashboard(fc,totais){
   const emAndamento = fc.filter(f=>f.status==="andamento").slice(0,4);
   let html = `<div class="lane"></div>`;
+  const teto = Number(state.config.tetoGastoMensal||0);
+  if(teto>0){
+    const pct = (totais.totalDespesasMes/teto)*100;
+    if(pct>=80){
+      html += `<div class="warn-banner">⚠️ <span>Gastos do mês já em <strong>${toBRL(totais.totalDespesasMes)}</strong> de um teto de ${toBRL(teto)} (${pct.toFixed(0)}%)${pct>=100?" — teto estourado!":", perto do limite."}</span></div>`;
+    }
+  }
   html += `<div class="stat-grid">
     <div class="stat-card"><div class="stat-label">Faturamento total</div><div class="stat-value">${toBRL(totais.faturamentoTotal)}</div></div>
     <div class="stat-card bad"><div class="stat-label">Despesas totais</div><div class="stat-value">${toBRL(totais.despesaTotal)}</div></div>
-    <div class="stat-card bad"><div class="stat-label">Mão de obra (motoristas)</div><div class="stat-value">${toBRL(totais.motoristasTotal)}</div></div>
+    <div class="stat-card blue"><div class="stat-label">Mão de obra (motoristas)</div><div class="stat-value">${toBRL(totais.motoristasTotal)}</div></div>
     <div class="stat-card good"><div class="stat-label">Lucro recebido</div><div class="stat-value">${toBRL(totais.lucroRecebido)}</div><div class="stat-sub">de ${toBRL(totais.lucroFinalizados)} já faturados</div></div>
     <div class="stat-card amber"><div class="stat-label">A receber</div><div class="stat-value">${toBRL(totais.totalAReceber)}</div><div class="stat-sub">${totais.qtdAReceber} frete(s) finalizado(s)</div></div>
     <div class="stat-card"><div class="stat-label">Fretes em andamento</div><div class="stat-value">${totais.qtdAndamento}</div><div class="stat-sub">${totais.qtdFinalizados} finalizados · ${totais.qtdPlanejados} planejados</div></div>
@@ -404,6 +462,7 @@ function viewDashboard(fc,totais){
     });
   }
   html += `<div class="charts-grid">
+    <div><div class="section-title">Faturado x gastos (mês atual)</div><div class="chart-box" style="height:200px;"><canvas id="chart-mes"></canvas></div></div>
     <div><div class="section-title">Despesas por categoria</div><div class="chart-box"><canvas id="chart-cat"></canvas></div></div>
     <div><div class="section-title">Lucro por frete (finalizados)</div><div class="chart-box"><canvas id="chart-lucro"></canvas></div></div>
   </div>`;
@@ -416,6 +475,11 @@ function viewDashboard(fc,totais){
   return html;
 }
 function renderCharts(totais){
+  const ctxMes = document.getElementById("chart-mes");
+  if(ctxMes){
+    if(charts.mes) charts.mes.destroy();
+    charts.mes = new Chart(ctxMes,{ type:"bar", data:{ labels:["Faturado","Gastos"], datasets:[{ data:[Math.round(totais.faturamentoMes), Math.round(totais.totalDespesasMes)], backgroundColor:["#1E5A40","#B84C3D"] }] }, options:{ plugins:{legend:{display:false}}, scales:{ y:{ ticks:{font:{size:11}} }, x:{ ticks:{font:{size:11}} } } } });
+  }
   const catData = CATEGORIAS.map(c=>({label:c.label,color:c.color,value:state.despesas.filter(d=>d.categoria===c.value).reduce((s,d)=>s+Number(d.valor||0),0)})).filter(c=>c.value>0);
   const ctxCat = document.getElementById("chart-cat");
   if(ctxCat){
@@ -452,6 +516,7 @@ function viewFretes(fc){
             <span class="badge" style="color:${s.color};background:${s.bg};">${s.label}</span>
             ${f.status==="finalizado" ? `<span class="badge" style="color:${STATUS_PAG[f.statusPagamento].color};background:${STATUS_PAG[f.statusPagamento].bg};">${STATUS_PAG[f.statusPagamento].label}</span>` : ""}
           </div>
+          ${f.cliente ? `<div style="font-size:12.5px;color:#4A4E54;font-weight:500;margin-bottom:1px;">👤 ${esc(f.cliente)}</div>` : ""}
           <div style="font-size:12.5px;color:#8A8D93;">${toDateBR(f.dataInicio)}${f.dataFim?` – ${toDateBR(f.dataFim)}`:""} · ${f.despesasVinculadas.length} despesa(s)${f.motoristaNome?` · 🧑‍✈️ ${esc(f.motoristaNome)}`:""}</div>
         </div>
         <div style="text-align:right;">
@@ -500,8 +565,16 @@ function viewAgenda(fc){
 }
 
 /* ======================= A RECEBER ======================= */
+let selecionadosReceber = new Set();
 function viewReceber(totais){
   const lista = [...totais.aReceber].sort((a,b)=>(a.dataFim||a.dataInicio||"").localeCompare(b.dataFim||b.dataInicio||""));
+  const idsValidos = new Set(lista.map(f=>f.id));
+  [...selecionadosReceber].forEach(id=>{ if(!idsValidos.has(id)) selecionadosReceber.delete(id); });
+
+  const grupos = {};
+  lista.forEach(f=>{ const cli = f.cliente || "Sem cliente definido"; (grupos[cli]=grupos[cli]||[]).push(f); });
+  const clientes = Object.keys(grupos).sort((a,b)=> a==="Sem cliente definido" ? 1 : b==="Sem cliente definido" ? -1 : a.localeCompare(b));
+
   let html = `<div class="lane"></div>
   <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
     <div class="stat-card amber"><div class="stat-label">Total a receber</div><div class="stat-value">${toBRL(totais.totalAReceber)}</div><div class="stat-sub">${totais.qtdAReceber} frete(s)</div></div>
@@ -511,21 +584,171 @@ function viewReceber(totais){
   if(lista.length===0){
     html += `<div class="empty"><div style="font-size:30px;">🧾</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nada pendente</div><div style="font-size:13.5px;color:#8A8D93;">Todos os fretes finalizados já foram recebidos.</div></div>`;
   } else {
-    lista.forEach(f=>{
-      const refData = f.dataFim || f.dataInicio;
-      let diasTxt = "";
-      if(refData){ const dias = Math.floor((Date.now()-new Date(refData+"T00:00:00").getTime())/86400000); if(dias>=0) diasTxt = dias===0 ? "hoje" : `há ${dias} dia(s)`; }
-      html += `<div class="card-row" style="cursor:default;">
-        <div style="flex:1;cursor:pointer;" data-abrir="${f.id}">
-          <div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div>
-          <div style="font-size:12.5px;color:#8A8D93;">Finalizado ${toDateBR(refData)}${diasTxt?` · ${diasTxt}`:""}</div>
-        </div>
-        <div class="mono" style="font-weight:600;font-size:14.5px;">${toBRL(f.faturamento)}</div>
-        <button class="btn-amber" style="padding:.4rem .7rem;font-size:12.5px;" data-marcar-pago="${f.id}">Marcar pago</button>
-      </div>`;
+    html += `<div style="font-size:12.5px;color:#8A8D93;margin-bottom:12px;">Marque vários fretes do mesmo cliente pra somar o valor certo a cobrar.</div>`;
+    clientes.forEach(cli=>{
+      const itens = grupos[cli];
+      const totalGrupo = itens.reduce((s,f)=>s+Number(f.faturamento||0),0);
+      const todosMarcados = itens.every(f=>selecionadosReceber.has(f.id));
+      html += `<div style="margin-bottom:18px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;cursor:pointer;">
+            <input type="checkbox" data-select-cliente="${esc(cli)}" ${todosMarcados?"checked":""} style="width:16px;height:16px;" />
+            👤 ${esc(cli)}
+          </label>
+          <span style="font-size:12.5px;color:#8A8D93;">${itens.length} frete(s) · <span class="mono" style="font-weight:600;color:var(--ink);">${toBRL(totalGrupo)}</span></span>
+        </div>`;
+      itens.forEach(f=>{
+        const refData = f.dataFim || f.dataInicio;
+        let diasTxt = "";
+        if(refData){ const dias = Math.floor((Date.now()-new Date(refData+"T00:00:00").getTime())/86400000); if(dias>=0) diasTxt = dias===0 ? "hoje" : `há ${dias} dia(s)`; }
+        html += `<div class="card-row" style="cursor:default;">
+          <input type="checkbox" data-select-frete="${f.id}" ${selecionadosReceber.has(f.id)?"checked":""} style="width:16px;height:16px;flex-shrink:0;" />
+          <div style="flex:1;cursor:pointer;" data-abrir="${f.id}">
+            <div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div>
+            <div style="font-size:12.5px;color:#8A8D93;">Finalizado ${toDateBR(refData)}${diasTxt?` · ${diasTxt}`:""}</div>
+          </div>
+          <div class="mono" style="font-weight:600;font-size:14.5px;">${toBRL(f.faturamento)}</div>
+          <button class="btn-amber" style="padding:.4rem .7rem;font-size:12.5px;" data-marcar-pago="${f.id}">Marcar pago</button>
+        </div>`;
+      });
+      html += `</div>`;
     });
   }
   return html;
+}
+function renderBarraSelecaoReceber(totais){
+  const existente = document.getElementById("barra-selecao-receber");
+  if(existente) existente.remove();
+  if(state.tab!=="receber" || selecionadosReceber.size===0) return;
+  const selecionados = totais.aReceber.filter(f=>selecionadosReceber.has(f.id));
+  const totalSel = selecionados.reduce((s,f)=>s+Number(f.faturamento||0),0);
+  const bar = document.createElement("div");
+  bar.id="barra-selecao-receber";
+  bar.style.cssText = "position:sticky;bottom:0;left:0;right:0;background:#24272B;color:#fff;border-radius:12px;padding:.85rem 1.1rem;display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap;z-index:10;";
+  bar.innerHTML = `<span style="font-size:13.5px;">${selecionados.length} frete(s) selecionado(s)</span>
+    <span class="mono" style="font-size:16px;font-weight:600;color:#D98E2B;">${toBRL(totalSel)}</span>
+    <button id="marcar-selecionados-pago" style="background:#D98E2B;color:#3B2405;border:none;border-radius:8px;padding:.5rem .9rem;font-weight:600;font-size:13px;">Marcar todos como pagos</button>`;
+  document.getElementById("view").appendChild(bar);
+  document.getElementById("marcar-selecionados-pago").addEventListener("click",()=>{
+    if(!confirm(`Marcar ${selecionados.length} frete(s) como pagos, totalizando ${toBRL(totalSel)}?`)) return;
+    selecionados.forEach(f=>marcarComoPago(f.id));
+    selecionadosReceber.clear();
+  });
+}
+
+/* ======================= CONTAS A PAGAR ======================= */
+let selecionadosPagar = new Set();
+function viewPagar(totais){
+  const sub = state.subTabPagar || "gerais";
+  let html = `<div class="lane"></div>
+  <div class="subnav">
+    <button class="chip ${sub==='gerais'?'active':''}" data-subpagar="gerais">Contas gerais</button>
+    <button class="chip ${sub==='motoristas'?'active':''}" data-subpagar="motoristas">Motoristas a pagar${totais.motoristasAPagar.length?` (${totais.motoristasAPagar.length})`:""}</button>
+    <button class="chip ${sub==='historico'?'active':''}" data-subpagar="historico">Pagamentos realizados</button>
+  </div>`;
+
+  if(sub==="gerais"){
+    html += `<div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+      <div class="stat-card bad"><div class="stat-label">Total pendente</div><div class="stat-value">${toBRL(totais.totalContasPendentes)}</div><div class="stat-sub">${totais.contasPendentes.length} conta(s)</div></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div class="section-title" style="margin:0;">Contas a pagar (mecânica, entre outras)</div>
+      <button class="btn-amber" data-nova-conta="1">+ Nova conta</button>
+    </div>`;
+    if(totais.contasPendentes.length===0){
+      html += `<div class="empty"><div style="font-size:30px;">📌</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nada pendente</div><div style="font-size:13.5px;color:#8A8D93;margin-bottom:16px;">Cadastre contas como mecânica, elétrica, interno, etc. assim que surgirem.</div><button class="btn-amber" style="margin:0 auto;" data-nova-conta="1">+ Nova conta</button></div>`;
+    } else {
+      [...totais.contasPendentes].sort((a,b)=>(a.vencimento||"").localeCompare(b.vencimento||"")).forEach(c=>{
+        const cat = CATEGORIAS.find(x=>x.value===c.categoria) || CATEGORIAS[CATEGORIAS.length-1];
+        html += `<div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #E9E6DC;border-radius:10px;padding:.7rem 1rem;margin-bottom:6px;">
+          <div style="width:34px;height:34px;border-radius:8px;background:${cat.color}22;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:15px;">${cat.icon}</div>
+          <div style="flex:1;min-width:0;"><div style="font-weight:600;font-size:14px;">${cat.label}${c.descricao?` · ${esc(c.descricao)}`:""}</div><div style="font-size:12px;color:#8A8D93;">${c.vencimento?`Vence ${toDateBR(c.vencimento)}`:"Sem vencimento"}</div></div>
+          <div class="mono" style="font-weight:600;font-size:14px;">${toBRL(c.valor)}</div>
+          <button class="btn-amber" style="padding:.4rem .7rem;font-size:12.5px;" data-pagar-conta="${c.id}">Marcar pago</button>
+          <button style="background:transparent;border:none;padding:3px;" data-excluir-conta="${c.id}">🗑️</button>
+        </div>`;
+      });
+    }
+  }
+
+  if(sub==="motoristas"){
+    const idsValidos = new Set(totais.motoristasAPagar.map(f=>f.id));
+    [...selecionadosPagar].forEach(id=>{ if(!idsValidos.has(id)) selecionadosPagar.delete(id); });
+    const grupos = {};
+    totais.motoristasAPagar.forEach(f=>{ const nome = f.motoristaNome||"Sem nome"; (grupos[nome]=grupos[nome]||[]).push(f); });
+    const nomes = Object.keys(grupos).sort();
+    html += `<div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+      <div class="stat-card blue"><div class="stat-label">Total a pagar a motoristas</div><div class="stat-value">${toBRL(totais.totalMotoristasAPagar)}</div><div class="stat-sub">${totais.motoristasAPagar.length} frete(s)</div></div>
+    </div>`;
+    if(nomes.length===0){
+      html += `<div class="empty"><div style="font-size:30px;">🧑‍✈️</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nada pendente</div><div style="font-size:13.5px;color:#8A8D93;">Todos os motoristas já foram pagos pelos fretes feitos.</div></div>`;
+    } else {
+      html += `<div style="font-size:12.5px;color:#8A8D93;margin-bottom:12px;">Selecione o motorista e os fretes que vai pagar agora — pode pagar só parte e deixar o resto para depois.</div>`;
+      nomes.forEach(nome=>{
+        const itens = grupos[nome];
+        const totalGrupo = itens.reduce((s,f)=>s+Number(f.valorMotorista||0),0);
+        const todosMarcados = itens.every(f=>selecionadosPagar.has(f.id));
+        html += `<div style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;cursor:pointer;">
+              <input type="checkbox" data-select-pagar-motorista="${esc(nome)}" ${todosMarcados?"checked":""} style="width:16px;height:16px;" />
+              🧑‍✈️ ${esc(nome)}
+            </label>
+            <span style="font-size:12.5px;color:#8A8D93;">${itens.length} frete(s) · <span class="mono" style="font-weight:600;color:var(--ink);">${toBRL(totalGrupo)}</span></span>
+          </div>`;
+        itens.forEach(f=>{
+          html += `<div class="card-row" style="cursor:default;">
+            <input type="checkbox" data-select-frete-pagar="${f.id}" ${selecionadosPagar.has(f.id)?"checked":""} style="width:16px;height:16px;flex-shrink:0;" />
+            <div style="flex:1;cursor:pointer;" data-abrir="${f.id}">
+              <div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div>
+              <div style="font-size:12.5px;color:#8A8D93;">${toDateBR(f.dataInicio)}${f.numeroViagens>1?` · ${f.numeroViagens} viagens`:""}</div>
+            </div>
+            <div class="mono" style="font-weight:600;font-size:14.5px;">${toBRL(f.valorMotorista)}</div>
+          </div>`;
+        });
+        html += `</div>`;
+      });
+    }
+  }
+
+  if(sub==="historico"){
+    const lista = [...totais.motoristasPagos].sort((a,b)=>(b.dataPagamentoMotorista||"").localeCompare(a.dataPagamentoMotorista||""));
+    html += `<div class="section-title">Pagamentos de motorista realizados</div>`;
+    if(lista.length===0){
+      html += `<div class="empty"><div style="font-size:30px;">✅</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nenhum pagamento ainda</div><div style="font-size:13.5px;color:#8A8D93;">Assim que você pagar um motorista, o registro aparece aqui.</div></div>`;
+    } else {
+      lista.forEach(f=>{
+        html += `<div class="card-row" style="cursor:default;">
+          <div style="flex:1;cursor:pointer;" data-abrir="${f.id}">
+            <div style="font-weight:600;font-size:14.5px;">🧑‍✈️ ${esc(f.motoristaNome)} · ${esc(f.origem)} → ${esc(f.destino)}</div>
+            <div style="font-size:12.5px;color:#8A8D93;">Pago em ${toDateBR(f.dataPagamentoMotorista)}</div>
+          </div>
+          <div class="mono" style="font-weight:600;font-size:14.5px;color:var(--blue-ink);">${toBRL(f.valorMotorista)}</div>
+          <button style="background:transparent;border:1px solid var(--line);border-radius:8px;padding:4px 9px;font-size:12px;font-weight:600;" data-desfazer-pagamento-motorista="${f.id}">Desfazer</button>
+        </div>`;
+      });
+    }
+  }
+  return html;
+}
+function renderBarraSelecaoPagar(totais){
+  const existente = document.getElementById("barra-selecao-pagar");
+  if(existente) existente.remove();
+  if(state.tab!=="pagar" || state.subTabPagar!=="motoristas" || selecionadosPagar.size===0) return;
+  const selecionados = totais.motoristasAPagar.filter(f=>selecionadosPagar.has(f.id));
+  const totalSel = selecionados.reduce((s,f)=>s+Number(f.valorMotorista||0),0);
+  const bar = document.createElement("div");
+  bar.id="barra-selecao-pagar";
+  bar.style.cssText = "position:sticky;bottom:0;left:0;right:0;background:#24272B;color:#fff;border-radius:12px;padding:.85rem 1.1rem;display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap;z-index:10;";
+  bar.innerHTML = `<span style="font-size:13.5px;">${selecionados.length} frete(s) selecionado(s)</span>
+    <span class="mono" style="font-size:16px;font-weight:600;color:#5BA3D0;">${toBRL(totalSel)}</span>
+    <button id="pagar-selecionados-motorista" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:.5rem .9rem;font-weight:600;font-size:13px;">Pagar selecionados</button>`;
+  document.getElementById("view").appendChild(bar);
+  document.getElementById("pagar-selecionados-motorista").addEventListener("click",()=>{
+    if(!confirm(`Confirmar pagamento de ${selecionados.length} frete(s), totalizando ${toBRL(totalSel)}?`)) return;
+    selecionados.forEach(f=>marcarMotoristaPago(f.id));
+    selecionadosPagar.clear();
+  });
 }
 
 /* ======================= DESPESAS ======================= */
@@ -586,8 +809,43 @@ function viewMotoristas(fc){
   return html;
 }
 
-/* ======================= GESTÃO ======================= */
+/* ======================= GESTÃO (RESUMO) ======================= */
 function viewGestao(totais){
+  const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
+  const sobraLivre = totais.lucroRecebido>0 ? totais.lucroRecebido*(1-percentTotal/100) : 0;
+  let html = `<div class="lane"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+    <div class="section-title" style="margin:0;">Distribuição do lucro recebido</div>
+    <button class="chip" data-ir="configgestao">⚙️ Configurar percentuais</button>
+  </div>
+  <div style="background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:1rem 1.1rem;margin-bottom:20px;font-size:13.5px;color:#4A4E54;">
+    Base de cálculo: lucro dos fretes já <strong>pagos</strong> — <span class="mono" style="font-weight:600;">${toBRL(totais.lucroRecebido)}</span>.
+  </div>
+  <div class="chart-box" style="height:280px;margin-bottom:20px;"><canvas id="chart-gestao"></canvas></div>
+  <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">`;
+  FUNDOS_DEF.forEach(fd=>{
+    const percent = Number(state.config[fd.key]||0);
+    const valor = totais.lucroRecebido>0 ? (totais.lucroRecebido*percent)/100 : 0;
+    html += `<div class="stat-card"><div class="stat-label">${fd.icon} ${fd.label}</div><div class="stat-value" style="font-size:17px;">${toBRL(valor)}</div><div class="stat-sub">${percent}%</div></div>`;
+  });
+  html += `<div class="stat-card good"><div class="stat-label">Lucro livre</div><div class="stat-value" style="font-size:17px;">${toBRL(sobraLivre)}</div><div class="stat-sub">${(100-percentTotal).toFixed(0)}%</div></div>
+  </div>`;
+  return html;
+}
+function renderChartGestao(totais){
+  const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
+  const sobraLivre = totais.lucroRecebido>0 ? totais.lucroRecebido*(1-percentTotal/100) : 0;
+  const ctx = document.getElementById("chart-gestao");
+  if(!ctx) return;
+  if(charts.gestao) charts.gestao.destroy();
+  const labels = [...FUNDOS_DEF.map(fd=>fd.label), "Lucro livre"];
+  const valores = [...FUNDOS_DEF.map(fd=> totais.lucroRecebido>0 ? (totais.lucroRecebido*Number(state.config[fd.key]||0))/100 : 0), Math.max(0,sobraLivre)];
+  const cores = [...FUNDOS_DEF.map(fd=>fd.color), "#1E5A40"];
+  charts.gestao = new Chart(ctx,{ type:"pie", data:{ labels, datasets:[{ data:valores.map(v=>Math.round(v)), backgroundColor:cores }] }, options:{ plugins:{ legend:{ position:"bottom", labels:{ boxWidth:10, font:{size:11} } } } } });
+}
+
+/* ======================= CONFIGURAÇÕES DE GESTÃO ======================= */
+function viewConfigGestao(totais){
   const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
   const sobraLivre = totais.lucroRecebido>0 ? totais.lucroRecebido*(1-percentTotal/100) : 0;
   let html = `<div class="lane"></div>
@@ -624,6 +882,15 @@ function viewGestao(totais){
       <div style="font-size:12.5px;color:var(--green);font-weight:600;">Lucro livre (não alocado)</div>
       <div id="sobra-livre" class="mono" style="font-size:20px;font-weight:600;color:var(--green);">${toBRL(sobraLivre)}</div>
     </div>
+  </div>
+  <div class="section-title" style="margin-top:28px;">Teto de gastos mensais com o caminhão</div>
+  <div style="background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:1rem 1.1rem;">
+    <div style="font-size:13px;color:#4A4E54;margin-bottom:12px;">Defina um teto mensal de despesas (combustível, pneu, mecânica, etc.). Quando o gasto do mês chegar perto do limite, o app avisa no Painel.</div>
+    <div class="grid-2" style="margin-bottom:0;">
+      <div class="field" style="margin-bottom:0;"><label>Teto mensal (R$)</label><input type="number" step="0.01" id="cfg-teto" value="${state.config.tetoGastoMensal||""}" placeholder="Ex: 5000" /></div>
+      <div class="field" style="margin-bottom:0;"><label>Gasto do mês atual</label><input type="text" value="${toBRL(totais.totalDespesasMes)}" disabled style="background:#F0EEE6;color:var(--muted);" /></div>
+    </div>
+    <button class="btn-primary" id="salvar-teto" style="margin-top:12px;">Salvar teto mensal</button>
   </div>`;
   return html;
 }
@@ -639,9 +906,50 @@ function bindViewEvents(fc,totais){
   document.querySelectorAll("[data-excluir-despesa]").forEach(el=>el.addEventListener("click",()=>{ if(confirm("Excluir esta despesa?")) excluirDespesa(el.dataset.excluirDespesa); }));
   document.querySelectorAll("[data-filtro]").forEach(el=>el.addEventListener("click",()=>{ state.filtroStatus=el.dataset.filtro; render(); }));
   document.querySelectorAll("[data-marcar-pago]").forEach(el=>el.addEventListener("click",(e)=>{ e.stopPropagation(); marcarComoPago(el.dataset.marcarPago); }));
+  document.querySelectorAll("[data-select-frete]").forEach(el=>el.addEventListener("click",(e)=>{
+    e.stopPropagation();
+    const id = el.dataset.selectFrete;
+    if(el.checked) selecionadosReceber.add(id); else selecionadosReceber.delete(id);
+    renderBarraSelecaoReceber(totais);
+  }));
+  document.querySelectorAll("[data-select-cliente]").forEach(el=>el.addEventListener("click",(e)=>{
+    e.stopPropagation();
+    const cli = el.dataset.selectCliente;
+    const itens = totais.aReceber.filter(f=>(f.cliente||"Sem cliente definido")===cli);
+    if(el.checked) itens.forEach(f=>selecionadosReceber.add(f.id));
+    else itens.forEach(f=>selecionadosReceber.delete(f.id));
+    render();
+  }));
+  document.querySelectorAll("[data-subpagar]").forEach(el=>el.addEventListener("click",()=>{ state.subTabPagar=el.dataset.subpagar; render(); }));
+  document.querySelectorAll("[data-nova-conta]").forEach(el=>el.addEventListener("click",()=>abrirModalConta(null)));
+  document.querySelectorAll("[data-pagar-conta]").forEach(el=>el.addEventListener("click",()=>{
+    const conta = state.contasPagar.find(c=>c.id===el.dataset.pagarConta);
+    if(conta && confirm(`Marcar "${conta.descricao||conta.categoria}" (${toBRL(conta.valor)}) como paga? Isso vai lançar como despesa automaticamente.`)) marcarContaPaga(conta);
+  }));
+  document.querySelectorAll("[data-excluir-conta]").forEach(el=>el.addEventListener("click",()=>{ if(confirm("Excluir esta conta?")) excluirContaPagar(el.dataset.excluirConta); }));
+  document.querySelectorAll("[data-desfazer-pagamento-motorista]").forEach(el=>el.addEventListener("click",()=>{ if(confirm("Desfazer este pagamento? O frete volta para 'a pagar'.")) desfazerMotoristaPago(el.dataset.desfazerPagamentoMotorista); }));
+  document.querySelectorAll("[data-select-frete-pagar]").forEach(el=>el.addEventListener("click",(e)=>{
+    e.stopPropagation();
+    const id = el.dataset.selectFretePagar;
+    if(el.checked) selecionadosPagar.add(id); else selecionadosPagar.delete(id);
+    renderBarraSelecaoPagar(totais);
+  }));
+  document.querySelectorAll("[data-select-pagar-motorista]").forEach(el=>el.addEventListener("click",(e)=>{
+    e.stopPropagation();
+    const nome = el.dataset.selectPagarMotorista;
+    const itens = totais.motoristasAPagar.filter(f=>(f.motoristaNome||"Sem nome")===nome);
+    if(el.checked) itens.forEach(f=>selecionadosPagar.add(f.id));
+    else itens.forEach(f=>selecionadosPagar.delete(f.id));
+    render();
+  }));
   document.querySelectorAll("[data-novo-motorista]").forEach(el=>el.addEventListener("click",()=>abrirModalMotorista(null)));
   document.querySelectorAll("[data-editar-motorista]").forEach(el=>el.addEventListener("click",()=>abrirModalMotorista(state.motoristas.find(m=>m.id===el.dataset.editarMotorista))));
   document.querySelectorAll("[data-excluir-motorista]").forEach(el=>el.addEventListener("click",()=>{ if(confirm("Excluir este motorista?")) excluirMotorista(el.dataset.excluirMotorista); }));
+  const salvarTetoBtn = document.getElementById("salvar-teto");
+  if(salvarTetoBtn) salvarTetoBtn.addEventListener("click",()=>{
+    state.config.tetoGastoMensal = Number(document.getElementById("cfg-teto").value)||0;
+    salvarConfig(state.config);
+  });
 
   document.querySelectorAll(".percent-input").forEach(inp=>{
     inp.addEventListener("input",()=>{
@@ -670,7 +978,7 @@ function bindViewEvents(fc,totais){
 function fecharModal(){ document.getElementById("modal-root").innerHTML=""; }
 
 function abrirModalFrete(frete){
-  const f = frete || { origem:"", destino:"", dataInicio:todayISO(), dataFim:"", status:"planejado", numeroViagens:1, valorViagem:"", kmIda:"", kmVolta:"", tipoPagamentoMotorista:"viagem", valorPorViagemMotorista:"", valorPorKmMotorista:"", observacoes:"" };
+  const f = frete || { origem:"", destino:"", cliente:"", dataInicio:todayISO(), dataFim:"", status:"planejado", numeroViagens:1, valorViagem:"", kmIda:"", kmVolta:"", tipoPagamentoMotorista:"viagem", valorPorViagemMotorista:"", valorPorKmMotorista:"", observacoes:"" };
   const statusPagamento = f.statusPagamento || "a_receber";
   const dataPagamento = f.dataPagamento || todayISO();
   const tipoPag = f.tipoPagamentoMotorista || "viagem";
@@ -679,6 +987,7 @@ function abrirModalFrete(frete){
   <div class="modal-overlay" id="ov-frete">
     <div class="modal-sheet" onclick="event.stopPropagation()">
       <div class="modal-head"><div class="modal-title">${f.id?"Editar frete":"Novo frete"}</div><button class="x-btn" id="fechar-frete">✕</button></div>
+      <div class="field"><label>Cliente (opcional)</label><input id="fr-cliente" value="${esc(f.cliente)}" placeholder="Nome de quem vai pagar o frete" /></div>
       <div class="grid-2">
         <div class="field"><label>Origem</label><input id="fr-origem" value="${esc(f.origem)}" placeholder="Nova Xavantina" /></div>
         <div class="field"><label>Destino</label><input id="fr-destino" value="${esc(f.destino)}" placeholder="Cuiabá" /></div>
@@ -787,6 +1096,7 @@ function abrirModalFrete(frete){
     const novoStatusPag = document.getElementById("fr-pagamento").value;
     salvarFrete({
       id:f.id, origem:document.getElementById("fr-origem").value.trim(), destino:document.getElementById("fr-destino").value.trim(),
+      cliente:document.getElementById("fr-cliente").value.trim(),
       dataInicio:document.getElementById("fr-inicio").value, dataFim:document.getElementById("fr-fim").value,
       status:novoStatus,
       numeroViagens:document.getElementById("fr-viagens").value, valorViagem:document.getElementById("fr-valor-viagem").value,
@@ -832,6 +1142,29 @@ function abrirModalMotorista(motorista){
   if(m.id) document.getElementById("excluir-motorista-modal").addEventListener("click",()=>{ if(confirm("Excluir este motorista?")){ excluirMotorista(m.id); fecharModal(); } });
 }
 
+function abrirModalConta(conta){
+  const c = conta || { categoria:"mecanica", descricao:"", valor:"", vencimento:todayISO() };
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+  <div class="modal-overlay" id="ov-conta">
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-head"><div class="modal-title">Nova conta a pagar</div><button class="x-btn" id="fechar-conta">✕</button></div>
+      <div class="field"><label>Categoria</label><select id="ct-cat">${CATEGORIAS.map(x=>`<option value="${x.value}" ${c.categoria===x.value?"selected":""}>${x.label}</option>`).join("")}</select></div>
+      <div class="grid-2">
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="ct-valor" value="${c.valor}" placeholder="0,00" /></div>
+        <div class="field"><label>Vencimento (opcional)</label><input type="date" id="ct-venc" value="${c.vencimento||""}" /></div>
+      </div>
+      <div class="field"><label>Descrição (opcional)</label><input id="ct-desc" value="${esc(c.descricao)}" placeholder="Ex: revisão do motor na oficina X" /></div>
+      <button class="btn-primary" id="salvar-conta">Salvar conta</button>
+    </div>
+  </div>`;
+  document.getElementById("ov-conta").addEventListener("click",fecharModal);
+  document.getElementById("fechar-conta").addEventListener("click",fecharModal);
+  document.getElementById("salvar-conta").addEventListener("click",()=>{
+    salvarContaPagar({ categoria:document.getElementById("ct-cat").value, valor:document.getElementById("ct-valor").value, vencimento:document.getElementById("ct-venc").value, descricao:document.getElementById("ct-desc").value.trim() });
+  });
+}
+
 function abrirModalDespesa(despesa){
   const d = despesa || { categoria:"combustivel", valor:"", data:todayISO(), freteId:"", descricao:"" };
   const root = document.getElementById("modal-root");
@@ -866,7 +1199,7 @@ function abrirDetalheFrete(id){
   root.innerHTML = `
   <div class="modal-overlay" id="ov-det">
     <div class="modal-sheet" onclick="event.stopPropagation()">
-      <div class="modal-head"><div class="modal-title">${esc(f.origem)} → ${esc(f.destino)}</div><button class="x-btn" id="fechar-det">✕</button></div>
+      <div class="modal-head"><div><div class="modal-title">${esc(f.origem)} → ${esc(f.destino)}</div>${f.cliente?`<div style="font-size:12.5px;color:#8A8D93;margin-top:2px;">👤 ${esc(f.cliente)}</div>`:""}</div><button class="x-btn" id="fechar-det">✕</button></div>
       <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
         <span class="badge" style="color:${s.color};background:${s.bg};">${s.label}</span>
         ${f.status==="finalizado" ? `<span class="badge" style="color:${STATUS_PAG[f.statusPagamento].color};background:${STATUS_PAG[f.statusPagamento].bg};">${STATUS_PAG[f.statusPagamento].label}</span>` : ""}
