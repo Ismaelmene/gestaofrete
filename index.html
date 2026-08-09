@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -197,12 +197,12 @@ const NAV = [
   { key:"pagar", label:"Contas a Pagar", icon:"📌" },
   { key:"despesas", label:"Despesas", icon:"💵" },
   { key:"motoristas", label:"Motoristas", icon:"🧑‍✈️" },
-  { key:"gestao", label:"Gestão", icon:"🐖" },
+  { key:"gestao", label:"Gestão", icon:"🏦" },
   { key:"configgestao", label:"Config. Gestão", icon:"⚙️" },
 ];
 
 /* ======================= ESTADO ======================= */
-let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], motoristas:[], contasPagar:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", subTabPagar:"gerais", loaded:false };
+let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], motoristas:[], contasPagar:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", subTabPagar:"gerais", subTabReceber:"pendentes", loaded:false };
 let unsubFretes=null, unsubDespesas=null, unsubConfig=null, unsubMotoristas=null, unsubContasPagar=null;
 let charts = {};
 
@@ -475,6 +475,9 @@ function viewDashboard(fc,totais){
   return html;
 }
 function renderCharts(totais){
+  if(typeof Chart==="undefined"){ document.querySelectorAll(".chart-box").forEach(b=>{ if(!b.querySelector("canvas").dataset.rendered) b.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8A8D93;font-size:12.5px;text-align:center;padding:0 1rem;">Não foi possível carregar a biblioteca de gráficos. Verifique sua conexão e recarregue a página.</div>'; });
+    return;
+  }
   const ctxMes = document.getElementById("chart-mes");
   if(ctxMes){
     if(charts.mes) charts.mes.destroy();
@@ -567,59 +570,84 @@ function viewAgenda(fc){
 /* ======================= A RECEBER ======================= */
 let selecionadosReceber = new Set();
 function viewReceber(totais){
-  const lista = [...totais.aReceber].sort((a,b)=>(a.dataFim||a.dataInicio||"").localeCompare(b.dataFim||b.dataInicio||""));
-  const idsValidos = new Set(lista.map(f=>f.id));
-  [...selecionadosReceber].forEach(id=>{ if(!idsValidos.has(id)) selecionadosReceber.delete(id); });
-
-  const grupos = {};
-  lista.forEach(f=>{ const cli = f.cliente || "Sem cliente definido"; (grupos[cli]=grupos[cli]||[]).push(f); });
-  const clientes = Object.keys(grupos).sort((a,b)=> a==="Sem cliente definido" ? 1 : b==="Sem cliente definido" ? -1 : a.localeCompare(b));
-
+  const sub = state.subTabReceber || "pendentes";
   let html = `<div class="lane"></div>
+  <div class="subnav">
+    <button class="chip ${sub==='pendentes'?'active':''}" data-subreceber="pendentes">Pendentes${totais.qtdAReceber?` (${totais.qtdAReceber})`:""}</button>
+    <button class="chip ${sub==='recebidos'?'active':''}" data-subreceber="recebidos">Recebidos</button>
+  </div>
   <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
     <div class="stat-card amber"><div class="stat-label">Total a receber</div><div class="stat-value">${toBRL(totais.totalAReceber)}</div><div class="stat-sub">${totais.qtdAReceber} frete(s)</div></div>
     <div class="stat-card good"><div class="stat-label">Já recebido</div><div class="stat-value">${toBRL(totais.pagos.reduce((s,f)=>s+Number(f.faturamento||0),0))}</div><div class="stat-sub">${totais.pagos.length} frete(s) pago(s)</div></div>
-  </div>
-  <div class="section-title">Fretes finalizados aguardando pagamento</div>`;
-  if(lista.length===0){
-    html += `<div class="empty"><div style="font-size:30px;">🧾</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nada pendente</div><div style="font-size:13.5px;color:#8A8D93;">Todos os fretes finalizados já foram recebidos.</div></div>`;
-  } else {
-    html += `<div style="font-size:12.5px;color:#8A8D93;margin-bottom:12px;">Marque vários fretes do mesmo cliente pra somar o valor certo a cobrar.</div>`;
-    clientes.forEach(cli=>{
-      const itens = grupos[cli];
-      const totalGrupo = itens.reduce((s,f)=>s+Number(f.faturamento||0),0);
-      const todosMarcados = itens.every(f=>selecionadosReceber.has(f.id));
-      html += `<div style="margin-bottom:18px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;cursor:pointer;">
-            <input type="checkbox" data-select-cliente="${esc(cli)}" ${todosMarcados?"checked":""} style="width:16px;height:16px;" />
-            👤 ${esc(cli)}
-          </label>
-          <span style="font-size:12.5px;color:#8A8D93;">${itens.length} frete(s) · <span class="mono" style="font-weight:600;color:var(--ink);">${toBRL(totalGrupo)}</span></span>
-        </div>`;
-      itens.forEach(f=>{
-        const refData = f.dataFim || f.dataInicio;
-        let diasTxt = "";
-        if(refData){ const dias = Math.floor((Date.now()-new Date(refData+"T00:00:00").getTime())/86400000); if(dias>=0) diasTxt = dias===0 ? "hoje" : `há ${dias} dia(s)`; }
+  </div>`;
+
+  if(sub==="pendentes"){
+    const lista = [...totais.aReceber].sort((a,b)=>(a.dataFim||a.dataInicio||"").localeCompare(b.dataFim||b.dataInicio||""));
+    const idsValidos = new Set(lista.map(f=>f.id));
+    [...selecionadosReceber].forEach(id=>{ if(!idsValidos.has(id)) selecionadosReceber.delete(id); });
+    const grupos = {};
+    lista.forEach(f=>{ const cli = f.cliente || "Sem cliente definido"; (grupos[cli]=grupos[cli]||[]).push(f); });
+    const clientes = Object.keys(grupos).sort((a,b)=> a==="Sem cliente definido" ? 1 : b==="Sem cliente definido" ? -1 : a.localeCompare(b));
+    html += `<div class="section-title">Fretes finalizados aguardando pagamento</div>`;
+    if(lista.length===0){
+      html += `<div class="empty"><div style="font-size:30px;">🧾</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nada pendente</div><div style="font-size:13.5px;color:#8A8D93;">Todos os fretes finalizados já foram recebidos.</div></div>`;
+    } else {
+      html += `<div style="font-size:12.5px;color:#8A8D93;margin-bottom:12px;">Marque vários fretes do mesmo cliente pra somar o valor certo a cobrar. Assim que marcar como pago, o frete sai daqui e vai para "Recebidos".</div>`;
+      clientes.forEach(cli=>{
+        const itens = grupos[cli];
+        const totalGrupo = itens.reduce((s,f)=>s+Number(f.faturamento||0),0);
+        const todosMarcados = itens.every(f=>selecionadosReceber.has(f.id));
+        html += `<div style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;cursor:pointer;">
+              <input type="checkbox" data-select-cliente="${esc(cli)}" ${todosMarcados?"checked":""} style="width:16px;height:16px;" />
+              👤 ${esc(cli)}
+            </label>
+            <span style="font-size:12.5px;color:#8A8D93;">${itens.length} frete(s) · <span class="mono" style="font-weight:600;color:var(--ink);">${toBRL(totalGrupo)}</span></span>
+          </div>`;
+        itens.forEach(f=>{
+          const refData = f.dataFim || f.dataInicio;
+          let diasTxt = "";
+          if(refData){ const dias = Math.floor((Date.now()-new Date(refData+"T00:00:00").getTime())/86400000); if(dias>=0) diasTxt = dias===0 ? "hoje" : `há ${dias} dia(s)`; }
+          html += `<div class="card-row" style="cursor:default;">
+            <input type="checkbox" data-select-frete="${f.id}" ${selecionadosReceber.has(f.id)?"checked":""} style="width:16px;height:16px;flex-shrink:0;" />
+            <div style="flex:1;cursor:pointer;" data-abrir="${f.id}">
+              <div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div>
+              <div style="font-size:12.5px;color:#8A8D93;">Finalizado ${toDateBR(refData)}${diasTxt?` · ${diasTxt}`:""}</div>
+            </div>
+            <div class="mono" style="font-weight:600;font-size:14.5px;">${toBRL(f.faturamento)}</div>
+            <button class="btn-amber" style="padding:.4rem .7rem;font-size:12.5px;" data-marcar-pago="${f.id}">Marcar pago</button>
+          </div>`;
+        });
+        html += `</div>`;
+      });
+    }
+  }
+
+  if(sub==="recebidos"){
+    const lista = [...totais.pagos].sort((a,b)=>(b.dataPagamento||"").localeCompare(a.dataPagamento||""));
+    html += `<div class="section-title">Fretes já recebidos</div>`;
+    if(lista.length===0){
+      html += `<div class="empty"><div style="font-size:30px;">✅</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nada recebido ainda</div><div style="font-size:13.5px;color:#8A8D93;">Assim que você marcar um frete como pago, ele aparece aqui.</div></div>`;
+    } else {
+      lista.forEach(f=>{
         html += `<div class="card-row" style="cursor:default;">
-          <input type="checkbox" data-select-frete="${f.id}" ${selecionadosReceber.has(f.id)?"checked":""} style="width:16px;height:16px;flex-shrink:0;" />
           <div style="flex:1;cursor:pointer;" data-abrir="${f.id}">
-            <div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div>
-            <div style="font-size:12.5px;color:#8A8D93;">Finalizado ${toDateBR(refData)}${diasTxt?` · ${diasTxt}`:""}</div>
+            <div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}${f.cliente?` · 👤 ${esc(f.cliente)}`:""}</div>
+            <div style="font-size:12.5px;color:#8A8D93;">Recebido em ${toDateBR(f.dataPagamento)}</div>
           </div>
-          <div class="mono" style="font-weight:600;font-size:14.5px;">${toBRL(f.faturamento)}</div>
-          <button class="btn-amber" style="padding:.4rem .7rem;font-size:12.5px;" data-marcar-pago="${f.id}">Marcar pago</button>
+          <div class="mono" style="font-weight:600;font-size:14.5px;color:var(--green);">${toBRL(f.faturamento)}</div>
+          <button style="background:transparent;border:1px solid var(--line);border-radius:8px;padding:4px 9px;font-size:12px;font-weight:600;" data-desfazer-recebimento="${f.id}">Desfazer</button>
         </div>`;
       });
-      html += `</div>`;
-    });
+    }
   }
   return html;
 }
 function renderBarraSelecaoReceber(totais){
   const existente = document.getElementById("barra-selecao-receber");
   if(existente) existente.remove();
-  if(state.tab!=="receber" || selecionadosReceber.size===0) return;
+  if(state.tab!=="receber" || state.subTabReceber!=="pendentes" || selecionadosReceber.size===0) return;
   const selecionados = totais.aReceber.filter(f=>selecionadosReceber.has(f.id));
   const totalSel = selecionados.reduce((s,f)=>s+Number(f.faturamento||0),0);
   const bar = document.createElement("div");
@@ -833,10 +861,11 @@ function viewGestao(totais){
   return html;
 }
 function renderChartGestao(totais){
-  const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
-  const sobraLivre = totais.lucroRecebido>0 ? totais.lucroRecebido*(1-percentTotal/100) : 0;
   const ctx = document.getElementById("chart-gestao");
   if(!ctx) return;
+  if(typeof Chart==="undefined"){ ctx.parentElement.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8A8D93;font-size:12.5px;text-align:center;padding:0 1rem;">Não foi possível carregar a biblioteca de gráficos. Verifique sua conexão e recarregue a página.</div>'; return; }
+  const percentTotal = FUNDOS_DEF.reduce((s,fd)=>s+Number(state.config[fd.key]||0),0);
+  const sobraLivre = totais.lucroRecebido>0 ? totais.lucroRecebido*(1-percentTotal/100) : 0;
   if(charts.gestao) charts.gestao.destroy();
   const labels = [...FUNDOS_DEF.map(fd=>fd.label), "Lucro livre"];
   const valores = [...FUNDOS_DEF.map(fd=> totais.lucroRecebido>0 ? (totais.lucroRecebido*Number(state.config[fd.key]||0))/100 : 0), Math.max(0,sobraLivre)];
@@ -906,6 +935,8 @@ function bindViewEvents(fc,totais){
   document.querySelectorAll("[data-excluir-despesa]").forEach(el=>el.addEventListener("click",()=>{ if(confirm("Excluir esta despesa?")) excluirDespesa(el.dataset.excluirDespesa); }));
   document.querySelectorAll("[data-filtro]").forEach(el=>el.addEventListener("click",()=>{ state.filtroStatus=el.dataset.filtro; render(); }));
   document.querySelectorAll("[data-marcar-pago]").forEach(el=>el.addEventListener("click",(e)=>{ e.stopPropagation(); marcarComoPago(el.dataset.marcarPago); }));
+  document.querySelectorAll("[data-subreceber]").forEach(el=>el.addEventListener("click",()=>{ state.subTabReceber=el.dataset.subreceber; render(); }));
+  document.querySelectorAll("[data-desfazer-recebimento]").forEach(el=>el.addEventListener("click",()=>{ if(confirm("Desfazer este recebimento? O frete volta para 'a receber'.")) marcarComoAReceber(el.dataset.desfazerRecebimento); }));
   document.querySelectorAll("[data-select-frete]").forEach(el=>el.addEventListener("click",(e)=>{
     e.stopPropagation();
     const id = el.dataset.selectFrete;
@@ -1008,6 +1039,10 @@ function abrirModalFrete(frete){
           <div class="field" style="margin-bottom:0;"><label>Km de ida</label><input type="number" step="1" id="fr-km-ida" value="${f.kmIda||""}" placeholder="0" /></div>
           <div class="field" style="margin-bottom:0;"><label>Km de volta</label><input type="number" step="1" id="fr-km-volta" value="${f.kmVolta||""}" placeholder="0" /></div>
         </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #F0EEE6;font-size:12.5px;color:#8A8D93;">
+          <span id="fr-km-total-txt">0 km rodado no total</span>
+          <span>R$/km: <strong id="fr-valor-km-rodado" class="mono" style="color:var(--ink);">—</strong></span>
+        </div>
       </div>
 
       <div style="display:flex;justify-content:space-between;align-items:center;background:var(--green-bg);border-radius:10px;padding:.75rem 1rem;margin-bottom:12px;">
@@ -1084,6 +1119,8 @@ function abrirModalFrete(frete){
     const kmIda = Number(document.getElementById("fr-km-ida").value)||0;
     const kmVolta = Number(document.getElementById("fr-km-volta").value)||0;
     const kmTotalGeral = (kmIda+kmVolta)*viagens;
+    document.getElementById("fr-km-total-txt").textContent = `${kmTotalGeral} km rodado no total`;
+    document.getElementById("fr-valor-km-rodado").textContent = kmTotalGeral>0 ? toBRL(faturamento/kmTotalGeral) : "—";
     const tipo = document.getElementById("fr-tipo-pag-motorista").value;
     let totalMotorista = 0;
     if(tipo==="km"){ totalMotorista = kmTotalGeral*(Number(document.getElementById("fr-valor-km-motorista").value)||0); }
@@ -1091,6 +1128,7 @@ function abrirModalFrete(frete){
     document.getElementById("fr-valor-motorista").value = totalMotorista;
     document.getElementById("fr-valor-motorista-total").textContent = toBRL(totalMotorista);
   }
+  recalcularFrete();
   document.getElementById("salvar-frete").addEventListener("click",()=>{
     const novoStatus = document.getElementById("fr-status").value;
     const novoStatusPag = document.getElementById("fr-pagamento").value;
