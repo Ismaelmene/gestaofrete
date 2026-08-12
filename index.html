@@ -52,6 +52,7 @@
   .brand-icon{width:42px;height:42px;border-radius:10px;background:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .brand-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:22px;letter-spacing:.3px;line-height:1.1;}
   .brand-sub{font-size:13px;color:var(--muted);}
+  .value-visibility-btn{background:transparent;border:1px solid var(--line);border-radius:8px;padding:.45rem .6rem;font-size:17px;line-height:1;color:var(--ink);}
   .lane{height:3px;margin:.75rem 1.25rem 1.25rem;background-image:repeating-linear-gradient(90deg,var(--amber) 0 18px,transparent 18px 30px);border-radius:2px;}
   nav{padding:0 1.25rem;display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);}
   nav button{display:flex;align-items:center;gap:6px;padding:.65rem .9rem;background:transparent;border:none;font-size:14px;font-weight:500;color:#8A8D93;border-bottom:3px solid transparent;margin-bottom:-1px;white-space:nowrap;}
@@ -134,7 +135,10 @@
           <div class="brand-sub">Baú próprio · gestão financeira</div>
         </div>
       </div>
-      <button id="logout-btn" class="link-btn">Sair</button>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button id="value-visibility-btn" class="value-visibility-btn" type="button" title="Ocultar valores" aria-label="Ocultar valores">👁️</button>
+        <button id="logout-btn" class="link-btn">Sair</button>
+      </div>
     </header>
     <nav id="tab-nav"></nav>
     <main><div id="view"></div></main>
@@ -203,13 +207,24 @@ const NAV = [
 ];
 
 /* ======================= ESTADO ======================= */
-let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], motoristas:[], contasPagar:[], fundos:[], fundoRetiradas:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", subTabPagar:"gerais", subTabReceber:"pendentes", loaded:false };
+let state = { uid:null, tab:"dashboard", fretes:[], despesas:[], motoristas:[], contasPagar:[], fundos:[], fundoRetiradas:[], config:{...DEFAULT_CONFIG}, filtroStatus:"todos", subTabPagar:"gerais", subTabReceber:"pendentes", valoresVisiveis:localStorage.getItem("fretes-valores-visiveis")!=="false", loaded:false };
 let unsubFretes=null, unsubDespesas=null, unsubConfig=null, unsubMotoristas=null, unsubContasPagar=null, unsubFundos=null, unsubFundoRetiradas=null;
 let rendimentosAplicados = false;
 let charts = {};
 
 /* ======================= HELPERS ======================= */
-function toBRL(n){ const v=Number.isFinite(n)?n:0; return v.toLocaleString("pt-BR",{style:"currency",currency:"BRL"}); }
+function toBRL(n){
+  if(!state.valoresVisiveis) return "R$ •••••";
+  const v=Number.isFinite(n)?n:0;
+  return v.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+}
+function atualizarBotaoVisibilidade(){
+  const btn=document.getElementById("value-visibility-btn");
+  if(!btn) return;
+  btn.textContent=state.valoresVisiveis ? "👁️" : "🙈";
+  btn.title=state.valoresVisiveis ? "Ocultar valores" : "Mostrar valores";
+  btn.setAttribute("aria-label",btn.title);
+}
 function toDateBR(iso){ if(!iso) return "—"; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; }
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function esc(s){ return (s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
@@ -332,6 +347,13 @@ function traduzErroAuth(code){
   return map[code] || "Não foi possível autenticar. Tente novamente.";
 }
 document.getElementById("logout-btn").addEventListener("click",()=>auth.signOut());
+document.getElementById("value-visibility-btn").addEventListener("click",()=>{
+  state.valoresVisiveis=!state.valoresVisiveis;
+  localStorage.setItem("fretes-valores-visiveis",String(state.valoresVisiveis));
+  atualizarBotaoVisibilidade();
+  render();
+});
+atualizarBotaoVisibilidade();
 
 auth.onAuthStateChanged(user=>{
   if(user){
