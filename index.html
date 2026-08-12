@@ -52,7 +52,9 @@
   .brand-icon{width:42px;height:42px;border-radius:10px;background:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .brand-title{font-family:'Oswald',sans-serif;font-weight:600;font-size:22px;letter-spacing:.3px;line-height:1.1;}
   .brand-sub{font-size:13px;color:var(--muted);}
-  .value-visibility-btn{background:transparent;border:1px solid var(--line);border-radius:8px;padding:.45rem .6rem;font-size:17px;line-height:1;color:var(--ink);}
+  .value-visibility-btn{width:36px;height:34px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:0;color:#4A4E54;}
+  .value-visibility-btn:hover{border-color:#B8B4AA;background:#F8F7F3;}
+  .value-visibility-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}
   .lane{height:3px;margin:.75rem 1.25rem 1.25rem;background-image:repeating-linear-gradient(90deg,var(--amber) 0 18px,transparent 18px 30px);border-radius:2px;}
   nav{padding:0 1.25rem;display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);}
   nav button{display:flex;align-items:center;gap:6px;padding:.65rem .9rem;background:transparent;border:none;font-size:14px;font-weight:500;color:#8A8D93;border-bottom:3px solid transparent;margin-bottom:-1px;white-space:nowrap;}
@@ -226,6 +228,15 @@ function atualizarBotaoVisibilidade(){
   btn.setAttribute("aria-label",btn.title);
 }
 function toDateBR(iso){ if(!iso) return "—"; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; }
+function atualizarBotaoVisibilidade(){
+  const btn=document.getElementById("value-visibility-btn");
+  if(!btn) return;
+  btn.innerHTML=state.valoresVisiveis
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 6.2A10.7 10.7 0 0 1 12 6c6.5 0 10 6 10 6a18.3 18.3 0 0 1-4.1 4.5"/><path d="M6.1 6.1C3.5 8 2 12 2 12s3.5 6 10 6c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+  btn.title=state.valoresVisiveis ? "Ocultar informações" : "Mostrar informações";
+  btn.setAttribute("aria-label",btn.title);
+}
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function esc(s){ return (s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function getFundo(key){ return state.fundos.find(f=>f.id===key) || {}; }
@@ -238,6 +249,10 @@ function freteIdentificacao(f, tamanho="14.5px"){
 }
 
 /* Km total do frete (ida+volta) x número de viagens */
+function freteIdentificacaoPainel(f){
+  if(!state.valoresVisiveis) return `<div style="font-weight:600;font-size:14.5px;">Rota: •••••</div><div style="font-size:12.5px;color:#4A4E54;margin-top:2px;">Contratante: •••••</div>`;
+  return freteIdentificacao(f);
+}
 function calcKmTotal(f){
   const viagens = Math.max(1, Number(f.numeroViagens||1));
   return (Number(f.kmIda||0)+Number(f.kmVolta||0))*viagens;
@@ -582,7 +597,7 @@ function viewDashboard(fc,totais){
     html += `<div class="section-title">Em andamento agora</div>`;
     emAndamento.forEach(f=>{
       html += `<div class="card-row" data-abrir="${f.id}">
-        <div>${freteIdentificacao(f)}
+        <div>${freteIdentificacaoPainel(f)}
         <div style="font-size:12.5px;color:#8A8D93;">Saída ${toDateBR(f.dataInicio)} · gasto até agora ${toBRL(f.totalDespesas)}</div></div>
         <span style="color:#8A8D93;">›</span></div>`;
     });
@@ -628,6 +643,7 @@ function renderCharts(totais){
     charts.cat = new Chart(ctxCat,{ type:"pie", data:{ labels:catData.map(c=>c.label), datasets:[{ data:catData.map(c=>c.value), backgroundColor:catData.map(c=>c.color) }] }, options:{ plugins:{ legend:{ position:"bottom", labels:{ boxWidth:10, font:{size:11} } }, tooltip:{callbacks:{label:c=>`${c.label}: ${toBRL(c.raw)}`}} } } });
   }
   const lucroData = totais.finalizados.slice(0,8).reverse();
+  if(!state.valoresVisiveis) lucroData.forEach((f,i)=>{ f.origem=`Frete ${i+1}`; f.destino=""; });
   const ctxL = document.getElementById("chart-lucro");
   if(ctxL){
     if(charts.lucro) charts.lucro.destroy();
