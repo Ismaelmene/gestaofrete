@@ -188,11 +188,12 @@ const FUNDOS_DEF = [
   { key:"desgaste", label:"Fundo de desgaste", desc:"Depreciação do veículo, revisões grandes, pneus futuros", icon:"🔧", color:"#8A5A0C" },
   { key:"viagem", label:"Fundo de despesas de viagem", desc:"Combustível, pedágio, alimentação das próximas viagens", icon:"💼", color:"#1E5A40" },
 ];
-const DEFAULT_CONFIG = { reinvestimento:10, emergencia:5, desgaste:5, viagem:5, tetoGastoMensal:0 };
+const DEFAULT_CONFIG = { reinvestimento:10, emergencia:5, desgaste:5, viagem:5, tetoGastoMensal:0, precoLitroDiesel:0, kmPorLitro:0 };
 const NAV = [
   { key:"dashboard", label:"Painel", icon:"📊" },
   { key:"fretes", label:"Fretes", icon:"🚚" },
   { key:"agenda", label:"Agenda", icon:"📅" },
+  { key:"combustivel", label:"Combustível", icon:"⛽" },
   { key:"receber", label:"A Receber", icon:"🧾" },
   { key:"pagar", label:"Contas a Pagar", icon:"📌" },
   { key:"despesas", label:"Despesas", icon:"💵" },
@@ -216,6 +217,22 @@ function getFundo(key){ return state.fundos.find(f=>f.id===key) || {}; }
 function getFundoSaldo(key){ return Number(getFundo(key).saldo||0); }
 function mesAtualStr(){ return todayISO().slice(0,7); }
 
+/* Km total do frete (ida+volta) x número de viagens */
+function calcKmTotal(f){
+  const viagens = Math.max(1, Number(f.numeroViagens||1));
+  return (Number(f.kmIda||0)+Number(f.kmVolta||0))*viagens;
+}
+/* Estimativa de litros e custo de diesel de um frete, com base na config de combustível */
+function calcDieselFrete(f){
+  const kmTotal = calcKmTotal(f);
+  const kmPorLitro = Number(state.config.kmPorLitro||0);
+  const precoLitro = Number(state.config.precoLitroDiesel||0);
+  if(kmTotal<=0 || kmPorLitro<=0 || precoLitro<=0) return { litros:0, custo:0, kmTotal };
+  const litros = kmTotal/kmPorLitro;
+  const custo = litros*precoLitro;
+  return { litros, custo, kmTotal };
+}
+
 function fretesCalc(){
   return state.fretes.map(f=>{
     const desp = state.despesas.filter(d=>d.freteId===f.id);
@@ -223,11 +240,12 @@ function fretesCalc(){
     const faturamento = Number(f.faturamento||0);
     const valorMotorista = Number(f.valorMotorista||0);
     const motorista = f.motoristaId ? state.motoristas.find(m=>m.id===f.motoristaId) : null;
-    const lucro = faturamento-totalDespesas-valorMotorista;
+    const { litros:litrosDiesel, custo:custoDiesel, kmTotal } = calcDieselFrete(f);
+    const lucro = faturamento-totalDespesas-valorMotorista-custoDiesel;
     const margem = faturamento>0 ? (lucro/faturamento)*100 : 0;
     const statusPagamento = f.status==="finalizado" ? (f.statusPagamento || "a_receber") : null;
     const motoristaPago = !!f.motoristaPago;
-    return {...f, despesasVinculadas:desp, totalDespesas, valorMotorista, motoristaNome: motorista ? motorista.nome : null, lucro, margem, statusPagamento, motoristaPago};
+    return {...f, despesasVinculadas:desp, totalDespesas, valorMotorista, motoristaNome: motorista ? motorista.nome : null, kmTotal, litrosDiesel, custoDiesel, lucro, margem, statusPagamento, motoristaPago};
   }).sort((a,b)=>(b.dataInicio||"").localeCompare(a.dataInicio||""));
 }
 function computeTotais(fc){
@@ -261,12 +279,19 @@ function computeTotais(fc){
   pagos.forEach(f=>{ const m=(f.dataPagamento||"").slice(0,7); if(!m) return; historicoMap[m]=(historicoMap[m]||0)+Number(f.faturamento||0); });
   const historicoFaturamento = Object.keys(historicoMap).sort((a,b)=>b.localeCompare(a)).map(m=>({ mes:m, label:`${nomesMesHist[Number(m.slice(5,7))-1]}/${m.slice(0,4)}`, valor:historicoMap[m] }));
 
+  const agendados = fc.filter(f=>f.status!=="finalizado");
+  const totalKmAgendado = agendados.reduce((s,f)=>s+f.kmTotal,0);
+  const totalKmRodado = finalizados.reduce((s,f)=>s+f.kmTotal,0);
+  const totalLitrosAgendado = agendados.reduce((s,f)=>s+f.litrosDiesel,0);
+  const totalDieselAgendado = agendados.reduce((s,f)=>s+f.custoDiesel,0);
+
   return { faturamentoTotal, despesaTotal, motoristasTotal, lucroFinalizados, lucroRecebido, totalAReceber,
     qtdFinalizados:finalizados.length, qtdAndamento:andamento.length, qtdPlanejados:planejados.length, qtdAReceber:aReceber.length,
-    finalizados, andamento, planejados, pagos, aReceber,
+    finalizados, andamento, planejados, pagos, aReceber, agendados,
     motoristasAPagar, motoristasPagos, totalMotoristasAPagar,
     contasPendentes, contasPagas, totalContasPendentes,
-    totalDespesasMes, faturamentoRecebidoMes, historicoFaturamento, mesAtual };
+    totalDespesasMes, faturamentoRecebidoMes, historicoFaturamento, mesAtual,
+    totalKmAgendado, totalKmRodado, totalLitrosAgendado, totalDieselAgendado };
 }
 
 /* ======================= AUTENTICAÇÃO ======================= */
@@ -409,22 +434,14 @@ function salvarDespesa(data){
 }
 function excluirDespesa(id){ colDespesas().doc(id).delete(); }
 function marcarComoPago(id){
+  const frete = fretesCalc().find(f=>f.id===id);
   colFretes().doc(id).set({ statusPagamento:"pago", dataPagamento:todayISO() },{merge:true});
-  const frete = state.fretes.find(f=>f.id===id);
-  if(frete){
-    const desp = state.despesas.filter(d=>d.freteId===id).reduce((s,d)=>s+Number(d.valor||0),0);
-    const lucro = Number(frete.faturamento||0) - desp - Number(frete.valorMotorista||0);
-    if(lucro>0) distribuirLucroParaFundos(lucro);
-  }
+  if(frete && frete.lucro>0) distribuirLucroParaFundos(frete.lucro);
 }
 function marcarComoAReceber(id){
+  const frete = fretesCalc().find(f=>f.id===id);
   colFretes().doc(id).set({ statusPagamento:"a_receber", dataPagamento:null },{merge:true});
-  const frete = state.fretes.find(f=>f.id===id);
-  if(frete && frete.statusPagamento==="pago"){
-    const desp = state.despesas.filter(d=>d.freteId===id).reduce((s,d)=>s+Number(d.valor||0),0);
-    const lucro = Number(frete.faturamento||0) - desp - Number(frete.valorMotorista||0);
-    if(lucro>0) distribuirLucroParaFundos(-lucro);
-  }
+  if(frete && frete.statusPagamento==="pago" && frete.lucro>0) distribuirLucroParaFundos(-frete.lucro);
 }
 function distribuirLucroParaFundos(lucro){
   FUNDOS_DEF.forEach(fd=>{
@@ -498,7 +515,8 @@ function render(){
   const view = document.getElementById("view");
   if(state.tab==="dashboard") view.innerHTML = viewDashboard(fc,totais);
   if(state.tab==="fretes") view.innerHTML = viewFretes(fc);
-  if(state.tab==="agenda") view.innerHTML = viewAgenda(fc);
+  if(state.tab==="agenda") view.innerHTML = viewAgenda(fc,totais);
+  if(state.tab==="combustivel") view.innerHTML = viewCombustivel(fc,totais);
   if(state.tab==="receber") view.innerHTML = viewReceber(totais);
   if(state.tab==="pagar") view.innerHTML = viewPagar(totais);
   if(state.tab==="despesas") view.innerHTML = viewDespesas();
@@ -508,6 +526,7 @@ function render(){
   document.querySelector(".lane") || document.getElementById("wrap").insertAdjacentHTML("afterbegin","");
   bindViewEvents(fc,totais);
   if(state.tab==="dashboard") renderCharts(totais);
+  if(state.tab==="agenda") renderChartsAgenda(fc);
   if(state.tab==="receber") renderBarraSelecaoReceber(totais);
   if(state.tab==="pagar") renderBarraSelecaoPagar(totais);
   if(state.tab==="gestao") renderChartGestao(totais);
@@ -626,7 +645,7 @@ function viewFretes(fc){
 }
 
 /* ======================= AGENDA ======================= */
-function viewAgenda(fc){
+function viewAgenda(fc,totais){
   const proximos = fc.filter(f=>f.status!=="finalizado").sort((a,b)=>(a.dataInicio||"").localeCompare(b.dataInicio||""));
   const totalPrevisto = proximos.reduce((s,f)=>s+Number(f.faturamento||0),0);
   const grupos = {};
@@ -636,6 +655,12 @@ function viewAgenda(fc){
   let html = `<div class="lane"></div>
   <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
     <div class="stat-card amber"><div class="stat-label">Faturamento previsto</div><div class="stat-value">${toBRL(totalPrevisto)}</div><div class="stat-sub">${proximos.length} frete(s) planejado(s)/andamento</div></div>
+    <div class="stat-card blue"><div class="stat-label">Km agendados</div><div class="stat-value">${Math.round(totais.totalKmAgendado)} km</div><div class="stat-sub">planejados + em andamento</div></div>
+    <div class="stat-card good"><div class="stat-label">Km já rodados</div><div class="stat-value">${Math.round(totais.totalKmRodado)} km</div><div class="stat-sub">fretes finalizados</div></div>
+  </div>
+  <div class="charts-grid" style="margin-bottom:20px;">
+    <div><div class="section-title">Km agendados por frete</div><div class="chart-box" style="height:230px;"><canvas id="chart-km-agendado"></canvas></div></div>
+    <div><div class="section-title">Km rodados por mês (finalizados)</div><div class="chart-box" style="height:230px;"><canvas id="chart-km-rodado"></canvas></div></div>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
     <div class="section-title" style="margin:0;">Próximos fretes</div>
@@ -654,10 +679,71 @@ function viewAgenda(fc){
             <div class="display" style="font-size:18px;line-height:1;">${f.dataInicio?f.dataInicio.slice(8,10):"--"}</div>
             <div style="font-size:10.5px;color:#8A8D93;">${s.label}</div>
           </div>
-          <div style="flex:1;"><div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div><div style="font-size:12px;color:#8A8D93;">Faturamento previsto ${toBRL(f.faturamento)}</div></div>
+          <div style="flex:1;"><div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div><div style="font-size:12px;color:#8A8D93;">Faturamento previsto ${toBRL(f.faturamento)}${f.kmTotal>0?` · ${Math.round(f.kmTotal)} km`:""}${f.custoDiesel>0?` · ⛽ ${toBRL(f.custoDiesel)}`:""}</div></div>
           <span class="badge" style="color:${s.color};background:${s.bg};">${s.label}</span>
         </div>`;
       });
+    });
+  }
+  return html;
+}
+function renderChartsAgenda(fc){
+  if(typeof Chart==="undefined") return;
+  const proximos = fc.filter(f=>f.status!=="finalizado" && f.kmTotal>0).sort((a,b)=>(a.dataInicio||"").localeCompare(b.dataInicio||"")).slice(0,10);
+  const ctx1 = document.getElementById("chart-km-agendado");
+  if(ctx1){
+    if(charts.kmAgendado) charts.kmAgendado.destroy();
+    charts.kmAgendado = new Chart(ctx1,{ type:"bar", data:{ labels:proximos.map(f=>`${(f.origem||"?").slice(0,10)}→${(f.destino||"?").slice(0,10)}`), datasets:[{ data:proximos.map(f=>Math.round(f.kmTotal)), backgroundColor:"#3D7EA6" }] }, options:{ indexAxis:"y", plugins:{legend:{display:false}}, scales:{ x:{ ticks:{font:{size:11}} }, y:{ ticks:{font:{size:10}} } } } });
+  }
+  const finalizados = fc.filter(f=>f.status==="finalizado");
+  const nomesMes = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+  const map = {};
+  finalizados.forEach(f=>{ const m=(f.dataFim||f.dataInicio||"").slice(0,7); if(!m) return; map[m]=(map[m]||0)+f.kmTotal; });
+  const meses = Object.keys(map).sort();
+  const ctx2 = document.getElementById("chart-km-rodado");
+  if(ctx2){
+    if(charts.kmRodado) charts.kmRodado.destroy();
+    charts.kmRodado = new Chart(ctx2,{ type:"bar", data:{ labels:meses.map(m=>`${nomesMes[Number(m.slice(5,7))-1]}/${m.slice(0,4)}`), datasets:[{ data:meses.map(m=>Math.round(map[m])), backgroundColor:"#1E5A40" }] }, options:{ plugins:{legend:{display:false}}, scales:{ y:{ ticks:{font:{size:11}} }, x:{ ticks:{font:{size:10}} } } } });
+  }
+}
+
+/* ======================= COMBUSTÍVEL ======================= */
+function viewCombustivel(fc,totais){
+  const preco = state.config.precoLitroDiesel||"";
+  const consumo = state.config.kmPorLitro||"";
+  const configurado = Number(state.config.precoLitroDiesel||0)>0 && Number(state.config.kmPorLitro||0)>0;
+  const proximos = totais.agendados.filter(f=>f.kmTotal>0).sort((a,b)=>(a.dataInicio||"").localeCompare(b.dataInicio||""));
+  let html = `<div class="lane"></div>
+  <div class="section-title">Preço e consumo do diesel</div>
+  <div style="background:#fff;border:1px solid #E9E6DC;border-radius:12px;padding:1rem 1.1rem;margin-bottom:20px;">
+    <div style="font-size:13px;color:#4A4E54;margin-bottom:12px;">Esses dados são usados para estimar quantos litros e quantos reais de diesel cada frete vai gastar, com base na quilometragem total (ida + volta × número de viagens) cadastrada em cada frete. Essa estimativa já entra automaticamente no cálculo de lucro do frete — inclusive no lucro usado para dividir entre os fundos.</div>
+    <div class="grid-2">
+      <div class="field"><label>Preço do litro do diesel (R$)</label><input type="number" step="0.01" id="cb-preco" value="${preco}" placeholder="Ex: 6,20" /></div>
+      <div class="field"><label>Consumo do caminhão (km por litro)</label><input type="number" step="0.01" id="cb-consumo" value="${consumo}" placeholder="Ex: 2,8" /></div>
+    </div>
+    <button class="btn-primary" id="salvar-combustivel" style="margin-top:8px;">Salvar</button>
+  </div>`;
+  if(!configurado){
+    html += `<div class="warn-banner" style="background:var(--amber-bg);color:var(--amber-ink);">⛽ <span>Preencha o preço do litro e o consumo acima para o app calcular a estimativa de diesel de cada frete agendado.</span></div>`;
+  }
+  html += `<div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+    <div class="stat-card amber"><div class="stat-label">Diesel estimado (fretes agendados)</div><div class="stat-value">${totais.totalLitrosAgendado.toFixed(1)} L</div><div class="stat-sub">${toBRL(totais.totalDieselAgendado)}</div></div>
+  </div>
+  <div class="section-title">Estimativa por frete agendado</div>`;
+  if(proximos.length===0){
+    html += `<div class="empty"><div style="font-size:30px;">⛽</div><div style="font-weight:600;font-size:15.5px;margin:8px 0 4px;">Nada para estimar ainda</div><div style="font-size:13.5px;color:#8A8D93;">Cadastre a quilometragem (ida/volta) nos fretes planejados ou em andamento para ver a estimativa de diesel aqui.</div></div>`;
+  } else {
+    proximos.forEach(f=>{
+      html += `<div class="card-row" data-abrir="${f.id}">
+        <div style="flex:1;">
+          <div style="font-weight:600;font-size:14.5px;">${esc(f.origem)} → ${esc(f.destino)}</div>
+          <div style="font-size:12.5px;color:#8A8D93;">${toDateBR(f.dataInicio)} · ${Math.round(f.kmTotal)} km</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="mono" style="font-weight:600;font-size:14.5px;">${configurado?toBRL(f.custoDiesel):"—"}</div>
+          <div style="font-size:11.5px;color:#8A8D93;">${configurado?f.litrosDiesel.toFixed(1)+" L":"defina preço/consumo"}</div>
+        </div>
+      </div>`;
     });
   }
   return html;
@@ -1122,6 +1208,12 @@ function bindViewEvents(fc,totais){
     state.config.tetoGastoMensal = Number(document.getElementById("cfg-teto").value)||0;
     salvarConfig(state.config);
   });
+  const salvarCombBtn = document.getElementById("salvar-combustivel");
+  if(salvarCombBtn) salvarCombBtn.addEventListener("click",()=>{
+    state.config.precoLitroDiesel = Number(document.getElementById("cb-preco").value)||0;
+    state.config.kmPorLitro = Number(document.getElementById("cb-consumo").value)||0;
+    salvarConfig(state.config);
+  });
   document.querySelectorAll("[data-salvar-fundo-info]").forEach(el=>el.addEventListener("click",()=>{
     const key = el.dataset.salvarFundoInfo;
     const banco = document.querySelector(`[data-fundo-banco="${key}"]`).value.trim();
@@ -1193,6 +1285,7 @@ function abrirModalFrete(frete){
           <span id="fr-km-total-txt">0 km rodado no total</span>
           <span>R$/km: <strong id="fr-valor-km-rodado" class="mono" style="color:var(--ink);">—</strong></span>
         </div>
+        <div id="fr-diesel-txt" style="margin-top:6px;font-size:12.5px;color:#8A8D93;">⛽ Diesel estimado: —</div>
       </div>
 
       <div style="display:flex;justify-content:space-between;align-items:center;background:var(--green-bg);border-radius:10px;padding:.75rem 1rem;margin-bottom:12px;">
@@ -1271,6 +1364,16 @@ function abrirModalFrete(frete){
     const kmTotalGeral = (kmIda+kmVolta)*viagens;
     document.getElementById("fr-km-total-txt").textContent = `${kmTotalGeral} km rodado no total`;
     document.getElementById("fr-valor-km-rodado").textContent = kmTotalGeral>0 ? toBRL(faturamento/kmTotalGeral) : "—";
+    const kmPorLitro = Number(state.config.kmPorLitro||0);
+    const precoLitro = Number(state.config.precoLitroDiesel||0);
+    const dieselTxtEl = document.getElementById("fr-diesel-txt");
+    if(kmTotalGeral>0 && kmPorLitro>0 && precoLitro>0){
+      const litros = kmTotalGeral/kmPorLitro;
+      const custo = litros*precoLitro;
+      dieselTxtEl.textContent = `⛽ Diesel estimado: ${litros.toFixed(1)} L · ${toBRL(custo)} (já descontado do lucro)`;
+    } else {
+      dieselTxtEl.textContent = "⛽ Diesel estimado: configure preço do litro e consumo na aba Combustível";
+    }
     const tipo = document.getElementById("fr-tipo-pag-motorista").value;
     let totalMotorista = 0;
     if(tipo==="km"){ totalMotorista = kmTotalGeral*(Number(document.getElementById("fr-valor-km-motorista").value)||0); }
@@ -1420,7 +1523,7 @@ function abrirDetalheFrete(id){
         ${f.status==="finalizado" ? `<span class="badge" style="color:${STATUS_PAG[f.statusPagamento].color};background:${STATUS_PAG[f.statusPagamento].bg};">${STATUS_PAG[f.statusPagamento].label}</span>` : ""}
         <span style="font-size:12.5px;color:#8A8D93;">${toDateBR(f.dataInicio)}${f.dataFim?` – ${toDateBR(f.dataFim)}`:""}</span>
       </div>
-      ${(f.numeroViagens>1 || f.kmIda || f.kmVolta) ? `<div style="font-size:12.5px;color:#8A8D93;margin-bottom:14px;">${f.numeroViagens||1} viagem(ns)${(f.kmIda||f.kmVolta)?` · ${(Number(f.kmIda||0)+Number(f.kmVolta||0))} km/viagem (ida ${f.kmIda||0} + volta ${f.kmVolta||0})`:""}</div>` : ""}
+      ${(f.numeroViagens>1 || f.kmIda || f.kmVolta) ? `<div style="font-size:12.5px;color:#8A8D93;margin-bottom:14px;">${f.numeroViagens||1} viagem(ns)${(f.kmIda||f.kmVolta)?` · ${(Number(f.kmIda||0)+Number(f.kmVolta||0))} km/viagem (ida ${f.kmIda||0} + volta ${f.kmVolta||0})`:""}${f.custoDiesel>0?` · ⛽ diesel estimado ${f.litrosDiesel.toFixed(1)} L (${toBRL(f.custoDiesel)})`:""}</div>` : ""}
       ${f.status==="finalizado" ? `<button id="toggle-pagamento" class="btn-amber" style="margin-bottom:14px;">${f.statusPagamento==="pago"?"Marcar como a receber":"Marcar como pago"}</button>` : ""}
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
         <div class="stat-card"><div class="stat-label">Faturamento</div><div class="stat-value" style="font-size:17px;">${toBRL(f.faturamento)}</div></div>
